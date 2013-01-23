@@ -12,7 +12,6 @@
  */
 
 #include "libomron/omron.h"
-#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -170,24 +169,25 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 			return read_result;
 		}
 
-		//assert(read_result == 8);
 		current_read_size = input_report[0];
 		IF_DEBUG(hexdump(input_report, current_read_size+1));
 		/* printf(" current_read=%d size=%d total_read_size=%d.\n", */
 		/* 		current_read_size, size, total_read_size); */
-	   
-		assert(current_read_size <= 8);
 
-		if (current_read_size == 8)
+		if (current_read_size < 0) {
+			return -1; //FIXME: proper error code
+		} else if (current_read_size > 8) {
+			return -1; //FIXME: proper error code
+		} else if (current_read_size == 8) {
 			current_read_size = 7; /* FIXME? Bug? */
+		}
 
-		assert(current_read_size < 8);
-		assert(current_read_size >= 0);
-
-		assert(total_read_size >= 0);
-
-
-		assert(current_read_size <= size - total_read_size);
+		if (current_read_size > size - total_read_size) {
+			// This shouldn't happen.  Just ignore any extra we got
+			// back..
+			DPRINTF("omron_get_command_return: Received more data than expected (%d > %d).  Ignoring extra.", total_read_size + current_read_size, size);
+			current_read_size = size - total_read_size;
+		}
 
 		memcpy(data + total_read_size, input_report + 1,
 		       current_read_size);
@@ -315,7 +315,6 @@ OMRON_DECLSPEC int omron_get_daily_data_count(omron_device* dev, unsigned char b
 	unsigned char command[8] =
 		{ 'G', 'D', 'C', 0x00, bank, 0x00, 0x00, bank };
 
-	// assert(bank < 2);
 	omron_exchange_cmd(dev, DAILY_INFO_MODE, 8, command,
 			   sizeof(data), data);
 	DPRINTF("Data units found: %d\n", (int)data[6]);
@@ -461,7 +460,6 @@ OMRON_DECLSPEC omron_pd_daily_data omron_get_pd_daily_data(omron_device* dev, in
 	unsigned char command[7] =
 		{ 'M', 'E', 'S', 0x00, 0x00, day, 0x00 ^ day};
 
-	// assert(bank < 2);
 	omron_exchange_cmd(dev, PEDOMETER_MODE, sizeof(command), command,
 			   sizeof(data), data);
 	daily_data.total_steps = bcd_to_int2(data, 6, 5);
@@ -479,7 +477,6 @@ OMRON_DECLSPEC omron_pd_hourly_data* omron_get_pd_hourly_data(omron_device* dev,
 	omron_pd_hourly_data* hourly_data = malloc(sizeof(omron_pd_hourly_data) * 24);
 	unsigned char data[37];
 
-	// assert(bank < 2);
 	int i, j;
 	for(i = 0; i < 3; ++i)
 	{
