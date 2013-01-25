@@ -166,15 +166,14 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 	int has_checked = 0;
 	unsigned char input_report[dev->input_size];
 	int read_result;
-
+	const int max_data_chunk = sizeof(input_report) - 1;
 
 	DPRINTF("\n");		/* AJR */
-	while(total_read_size < size)
-	{
+	do {
 		read_result = omron_read_data(dev, input_report, sizeof(input_report));
 		DPRINTF("AJR read result=%d.\n", read_result);
 		if (read_result < 0) {
-			fprintf(stderr, "omron_get_command_return: read_result_result %d < zero\n", read_result);
+			DPRINTF("omron_get_command_return: read_result %d < zero\n", read_result);
 			return read_result;
 		}
 
@@ -183,8 +182,8 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 			return OMRON_ERR_DEVIO;
 		} else if (current_read_size > sizeof(input_report)) {
 			return OMRON_ERR_DEVIO;
-		} else if (current_read_size == sizeof(input_report)) {
-			current_read_size -= 1; /* FIXME? Bug? */
+		} else if (current_read_size > max_data_chunk) {
+			current_read_size = max_data_chunk; /* FIXME? Bug? */
 		}
 
 		IF_DEBUG(hexdump(input_report, current_read_size+1));
@@ -218,7 +217,7 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 				has_checked = 1;
 			}
 		}
-	}
+	} while ((total_read_size < size) && (current_read_size == max_data_chunk));
 
 	if (total_read_size < 3) { //FIXME: should this be 2?
 		return OMRON_ERR_BADDATA;
@@ -315,7 +314,10 @@ OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, unsigned char* da
 {
 	int status;
 
-	status = omron_dev_info_command(dev, "VER00", data, data_size-1);
+	if (data_size < 13) {
+		return OMRON_ERR_BUFSIZE;
+	}
+	status = omron_dev_info_command(dev, "VER00", data, 12);
 	if (status < 0) return status;
 	data[status] = 0;
 	return status;
@@ -325,7 +327,10 @@ OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, unsigned char* data, 
 {
 	int status;
 
-	status = omron_dev_info_command(dev, "PRF00", data, data_size-1);
+	if (data_size < 12) {
+		return OMRON_ERR_BUFSIZE;
+	}
+	status = omron_dev_info_command(dev, "PRF00", data, 11);
 	if (status < 0) return status;
 	data[status] = 0;
 	return status;
@@ -335,7 +340,10 @@ OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, unsigned char* dat
 {
 	int status;
 
-	status = omron_dev_info_command(dev, "SRL00", data, data_size-1);
+	if (data_size < 9) {
+		return OMRON_ERR_BUFSIZE;
+	}
+	status = omron_dev_info_command(dev, "SRL00", data, 8);
 	if (status < 0) return status;
 	data[status] = 0;
 	return status;
