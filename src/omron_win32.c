@@ -22,7 +22,6 @@
 //Application global variables
 DWORD								ActualBytesRead;
 DWORD								BytesRead;
-HIDP_CAPS							Capabilities;
 DWORD								cbBytesRead;
 PSP_DEVICE_INTERFACE_DETAIL_DATA	detailData;
 DWORD								dwError;
@@ -36,13 +35,12 @@ ULONG								Length;
 LPOVERLAPPED						lpOverLap;
 BOOL								MyDeviceDetected = FALSE;
 TCHAR*								MyDevicePathName;
-DWORD								NumberOfBytesRead;
 char								OutputReport[256];
 DWORD								ReportType;
 ULONG								Required;
 TCHAR*								ValueToDisplay;
 
-void GetDeviceCapabilities(HANDLE DeviceHandle)
+void GetDeviceCapabilities(HANDLE DeviceHandle, HIDP_CAPS *pCaps)
 {
 	//Get the Capabilities structure for the device.
 
@@ -56,9 +54,7 @@ void GetDeviceCapabilities(HANDLE DeviceHandle)
 	  but HidP_GetCaps and other API functions require a pointer to the buffer.
 	*/
 
-	HidD_GetPreparsedData
-		(DeviceHandle,
-		 &PreparsedData);
+	HidD_GetPreparsedData(DeviceHandle, &PreparsedData);
 
 	/*
 	  API function: HidP_GetCaps
@@ -71,9 +67,7 @@ void GetDeviceCapabilities(HANDLE DeviceHandle)
 	  Returns: a Capabilities structure containing the information.
 	*/
 
-	HidP_GetCaps
-		(PreparsedData,
-		 &Capabilities);
+	HidP_GetCaps(PreparsedData, pCaps);
 
 	HidD_FreePreparsedData(PreparsedData);
 }
@@ -84,6 +78,7 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 
 	HIDD_ATTRIBUTES						Attributes;
 	SP_DEVICE_INTERFACE_DATA			devInfoData;
+	HIDP_CAPS							Capabilities;
 	BOOL								LastDevice = FALSE;
 	int									MemberIndex = 0;
 	LONG								Result;
@@ -246,7 +241,9 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 				{
 					MyDeviceDetected = TRUE;
 					MyDevicePathName = detailData->DevicePath;
-					GetDeviceCapabilities(dev->device._dev);
+					GetDeviceCapabilities(dev->device._dev, &Capabilities);
+					dev->input_size = Capabilities.InputReportByteLength;
+					dev->output_size = Capabilities.OutputReportByteLength;
 					break;
 				}
 			}
@@ -291,42 +288,62 @@ OMRON_DECLSPEC int omron_close(omron_device* dev)
 int omron_set_mode(omron_device* dev, omron_mode mode)
 {
 	char feature_report[3] = {0x0, (mode & 0xff00) >> 8, (mode & 0x00ff)};
-	int ret = HidD_SetFeature(dev->device._dev, feature_report, Capabilities.FeatureReportByteLength);
+	int ret = HidD_SetFeature(dev->device._dev, feature_report, sizeof(feature_report));
 	if(!ret)
 	{
 		printf("Cannot send feature! %d\n", GetLastError());
-		return (GetLastError() * -1);
+		return OMRON_ERR_DEVIO;
 	}
 	return 0;
 }
 
-OMRON_DECLSPEC int omron_read_data(omron_device* dev, unsigned char *input_report)
+OMRON_DECLSPEC int omron_read_data(omron_device* dev, unsigned char *report_buf, int report_size)
 {
-	int Result;
-	char read[9];
-	Result = ReadFile
-		(dev->device._dev,
-		 read,
-		 Capabilities.InputReportByteLength,
-		 &NumberOfBytesRead,
-		 NULL);
-	memcpy(input_report, read+1, 8);
-	return Result;
+	int result;
+	char read_buf[dev->input_size + 1];
+	DWORD bytes_read;
+
+	if (report_size < dev->input_size) {
+		return OMRON_ERR_BUFSIZE;
+	}
+	result = ReadFile(dev->device._dev,
+			  read_buf,
+			  dev->input_size + 1,
+			  &bytes_read,
+			  NULL);
+	memcpy(report_buf, read_buf + 1, bytes_read - 1);
+	if (result) {
+		// Windows uses nonzero to mean "success"
+		if (bytes_read == dev->input_size + 1) {
+			return 0;
+		}
+	}
+	return OMRON_ERR_DEVIO;
 }
 
-OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *output_report)
+OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *report_buf, int report_size)
 {
-	int Result;
-	char command[9];
+	int result;
+	char command[dev->output_size + 1];
+	DWORD bytes_written;
+
+	if (report_size > dev->output_size) {
+		return OMRON_ERR_BUFSIZE;
+	}
 	command[0] = 0x0;
-	memcpy((command+1), output_report, 8);
-	Result = WriteFile
-		(dev->device._dev,
-		 command,
-		 Capabilities.OutputReportByteLength,
-		 &NumberOfBytesRead,
-		 (LPOVERLAPPED) &HIDOverlapped);
-	return Result;
+	memcpy(command + 1, report_buf, report_size);
+	result = WriteFile(dev->device._dev,
+			   command,
+			   report_size,
+			   &bytes_written,
+			   (LPOVERLAPPED) &HIDOverlapped);
+	if (result) {
+		// Windows uses nonzero to mean "success"
+		if (bytes_written == report_size) {
+			return 0;
+		}
+	}
+	return OMRON_ERR_DEVIO;
 }
 
 OMRON_DECLSPEC omron_device* omron_create()

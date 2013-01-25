@@ -52,15 +52,15 @@ public:
     //int omron_get_device_serial(omron_device* dev, unsigned char* data);
 
     Omron::data get_device_version() {
-	unsigned char buffer[30]={0}; /* buffer overflow begging to happen */
-	omron_get_device_version(device, buffer);
+	unsigned char buffer[30]={0};
+	omron_get_device_version(device, buffer, sizeof(buffer));
 	return datify(buffer,30);
     }
 
     // Blood Pressure Functions
     Omron::data get_bp_profile() {
-	unsigned char buffer[30]={0}; /* buffer overflow begging to happen */
-	int ret = omron_get_bp_profile(device, buffer);
+	unsigned char buffer[30]={0};
+	int ret = omron_get_bp_profile(device, buffer, sizeof(buffer));
 	if (ret < 0) return Omron::data();
 	return datify(buffer,30);
     }

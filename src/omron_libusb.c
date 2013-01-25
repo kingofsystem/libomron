@@ -17,6 +17,11 @@
 
 #define OMRON_USB_INTERFACE	0
 
+// FIXME: The following should really be parsed from the HID descriptor instead
+//        of being defined as macros..
+#define INPUT_REPORT_SIZE 8
+#define OUTPUT_REPORT_SIZE 8
+
 omron_device* omron_create()
 {
 	omron_device* s = (omron_device*)malloc(sizeof(omron_device));
@@ -40,12 +45,12 @@ int omron_get_count(omron_device* s, int device_vid, int device_pid)
 
 	if (!s->device._is_inited)
 	{
-		return E_NPUTIL_NOT_INITED;
+		return OMRON_ERR_NOTINIT;
 	}
 	
 	if (libusb_get_device_list(s->device._context, &devs) < 0)
 	{
-		return E_NPUTIL_DRIVER_ERROR;
+		return OMRON_ERR_DEVIO;
 	}
 
 	while ((dev = devs[i++]) != NULL)
@@ -79,12 +84,12 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 
 	if (!s->device._is_inited)
 	{
-		return E_NPUTIL_NOT_INITED;
+		return OMRON_ERR_NOTINIT;
 	}
 
 	if ((device_error_code = libusb_get_device_list(s->device._context, &devs)) < 0)
 	{
-		return E_NPUTIL_DRIVER_ERROR;
+		return OMRON_ERR_DEVIO;
 	}
 
 	while ((dev = devs[i++]) != NULL)
@@ -94,7 +99,7 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 		if (device_error_code < 0)
 		{
 			libusb_free_device_list(devs, 1);
-			return E_NPUTIL_NOT_INITED;
+			return OMRON_ERR_NOTINIT;
 		}
 		if (desc.idVendor == device_vid && desc.idProduct == device_pid)
 		{
@@ -113,13 +118,15 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 		if (device_error_code < 0)
 		{
 			libusb_free_device_list(devs, 1);
-			return E_NPUTIL_NOT_INITED;
+			return OMRON_ERR_NOTINIT;
 		}
 	}
 	else
 	{
-		return E_NPUTIL_NOT_INITED;		
+		return OMRON_ERR_NOTINIT;		
 	}
+	s->input_size = INPUT_REPORT_SIZE;
+	s->output_size = OUTPUT_REPORT_SIZE;
 	s->device._is_open = 1;
 
 	if(libusb_kernel_driver_active(s->device._device, 0))
@@ -135,11 +142,11 @@ int omron_close(omron_device* s)
 {
 	if(!s->device._is_open)
 	{
-		return E_NPUTIL_NOT_OPENED;
+		return OMRON_ERR_NOTOPEN;
 	}
 	if (libusb_release_interface(s->device._device, 0) < 0)
 	{
-		return E_NPUTIL_NOT_INITED;				
+		return OMRON_ERR_NOTINIT;				
 	}
 	libusb_close(s->device._device);
 	s->device._is_open = 0;
@@ -164,16 +171,33 @@ int omron_set_mode(omron_device* dev, omron_mode mode)
 	return !(num_bytes_transferred == sizeof(feature_report));
 }
 
-int omron_read_data(omron_device* dev, uint8_t* input_report)
+int omron_read_data(omron_device* dev, uint8_t* report_buf, int report_size)
 {
 	int trans;
-	int ret = libusb_bulk_transfer(dev->device._device, OMRON_IN_ENDPT, input_report, 8, &trans, 1000);
-	return ret;
+	int status;
+
+	if (report_size < dev->input_size) {
+		return OMRON_ERR_BUFSIZE;
+	}
+	status = libusb_bulk_transfer(dev->device._device, OMRON_IN_ENDPT, report_buf, dev->input_size, &trans, 1000);
+	if (status != 0 || trans != dev->input_size) {
+		return OMRON_ERR_DEVIO;
+	}
+	return 0;
 }
 
-int omron_write_data(omron_device* dev, uint8_t* output_report)
+int omron_write_data(omron_device* dev, uint8_t* report_buf, int report_size)
 {
 	int trans;
-	return libusb_bulk_transfer(dev->device._device, OMRON_OUT_ENDPT, output_report, 8, &trans, 1000);
+	int status;
+
+	if (report_size > dev->output_size) {
+		return OMRON_ERR_BUFSIZE;
+	}
+	status = libusb_bulk_transfer(dev->device._device, OMRON_OUT_ENDPT, report_buf, report_size, &trans, 1000);
+	if (status != 0 || trans != report_size) {
+		return OMRON_ERR_DEVIO;
+	}
+	return 0;
 }
 

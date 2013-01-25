@@ -1,3 +1,4 @@
+//TODO: check OMRON_ERR_DEVIO instances to see if any of them should be BADDATA instead
 /*
  * Generic function file for Omron Health User Space Driver
  *
@@ -82,7 +83,7 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 {
 	int total_write_size = 0;
 	int current_write_size;
-	unsigned char output_report[8];
+	unsigned char output_report[dev->output_size];
 
 	DPRINTF("omron_send:");
 	IF_DEBUG(hexdump(buf, size));
@@ -91,15 +92,15 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 	while(total_write_size < size)
 	{
 		current_write_size = size - total_write_size;
-		if(current_write_size > 7)
-			current_write_size = 7;
+		if(current_write_size >= dev->output_size)
+			current_write_size = dev->output_size - 1;
 
 		output_report[0] = current_write_size;
 		memcpy(output_report + 1, buf+total_write_size,
 		       current_write_size);
 
-		if (omron_write_data(dev, output_report)) {
-			return E_NPUTIL_DRIVER_ERROR;
+		if (omron_write_data(dev, output_report, sizeof(output_report))) {
+			return OMRON_ERR_DEVIO;
 		}
 		total_write_size += current_write_size;
 	}
@@ -107,9 +108,12 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 	return 0;
 }
 
-int omron_check_success(unsigned char *input_report, int start_index)
+int omron_check_success(unsigned char *input_report)
 {
-	return (input_report[start_index] == 'O' && input_report[start_index + 1] == 'K') ? 0 : 1;
+	if (input_report[0] != 'O' || input_report[1] != 'K') {
+		return OMRON_ERR_NEGRESP;
+	}
+	return 0;
 }
 
 int omron_send_clear(omron_device* dev)
@@ -117,16 +121,16 @@ int omron_send_clear(omron_device* dev)
 	//static const unsigned char zero[23]; /* = all zeroes */
 	static const unsigned char zero[12]; /* = all zeroes */
 	//unsigned char input_report[9];
-	unsigned char input_report[8];
+	unsigned char input_report[dev->input_size];
 	int status;
 	// We don't really care whether the following call succeeds or not
-	status = omron_read_data(dev, input_report);
+	status = omron_read_data(dev, input_report, sizeof(input_report));
 	do {
 		status = omron_send_command(dev, sizeof(zero), zero);
-		if (status) return status;
-		status = omron_read_data(dev, input_report);
-		if (status) return status;
-	} while (omron_check_success(input_report, 1) != 0);
+		if (status < 0) return status;
+		status = omron_read_data(dev, input_report, sizeof(input_report));
+		if (status < 0) return status;
+	} while (omron_check_success(input_report + 1) != 0);
 
 	return 0;
 }
@@ -160,14 +164,14 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 	int total_read_size = 0;
 	int current_read_size = 0;
 	int has_checked = 0;
-	unsigned char input_report[9];
+	unsigned char input_report[dev->input_size];
 	int read_result;
 
 
 	DPRINTF("\n");		/* AJR */
 	while(total_read_size < size)
 	{
-		read_result = omron_read_data(dev, input_report);
+		read_result = omron_read_data(dev, input_report, sizeof(input_report));
 		DPRINTF("AJR read result=%d.\n", read_result);
 		if (read_result < 0) {
 			fprintf(stderr, "omron_get_command_return: read_result_result %d < zero\n", read_result);
@@ -175,17 +179,17 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 		}
 
 		current_read_size = input_report[0];
+		if (current_read_size < 0) {
+			return OMRON_ERR_DEVIO;
+		} else if (current_read_size > sizeof(input_report)) {
+			return OMRON_ERR_DEVIO;
+		} else if (current_read_size == sizeof(input_report)) {
+			current_read_size -= 1; /* FIXME? Bug? */
+		}
+
 		IF_DEBUG(hexdump(input_report, current_read_size+1));
 		/* printf(" current_read=%d size=%d total_read_size=%d.\n", */
 		/* 		current_read_size, size, total_read_size); */
-
-		if (current_read_size < 0) {
-			return -1; //FIXME: proper error code
-		} else if (current_read_size > 8) {
-			return -1; //FIXME: proper error code
-		} else if (current_read_size == 8) {
-			current_read_size = 7; /* FIXME? Bug? */
-		}
 
 		if (current_read_size > size - total_read_size) {
 			// This shouldn't happen.  Just ignore any extra we got
@@ -209,17 +213,23 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 				has_checked = (total_read_size >= 5);
 			else {
 				if (data[0] != 'O' || data[1] != 'K')
-					return 1; /* garbled response */
+					return OMRON_ERR_BADDATA; /* garbled response */
 				
 				has_checked = 1;
 			}
 		}
 	}
 
-	if (total_read_size >= 3 && data[0] == 'O' && data[1] == 'K')
-		return xor_checksum(data+2, total_read_size-2); /* 0 = OK */
-	else
-		return 0;
+	if (total_read_size < 3) { //FIXME: should this be 2?
+		return OMRON_ERR_BADDATA;
+	}
+	if (data[0] != 'O' || data[1] != 'K') {
+		return OMRON_ERR_BADDATA;
+	}
+	if (xor_checksum(data+2, total_read_size-2)) {
+		return OMRON_ERR_BADDATA;
+	}
+	return total_read_size;
 }
 
 int omron_check_mode(omron_device* dev, omron_mode mode)
@@ -237,7 +247,7 @@ int omron_check_mode(omron_device* dev, omron_mode mode)
 	}
 	else
 	{
-		DPRINTF("omron_exchange_cmd: I/O error, status=%d\n",
+		DPRINTF("omron_set_mode: I/O error, status=%d\n",
 			ret);		
 	}
 	return ret;
@@ -251,18 +261,23 @@ static int omron_exchange_cmd(omron_device *dev,
 			       unsigned char *response)
 {
 	int status;
+	int read_size;
 	struct timeval timeout;
 	
 	// Retry command if the response is garbled, but accept "NO" as
 	// a valid response.
 	do {
 		status = omron_check_mode(dev, mode);
-		if (status) return status;
+		if (status < 0) return status;
 		status = omron_send_command(dev, cmd_len, cmd);
-		if (status) return status;
-		status = omron_get_command_return(dev, response_len, response);
-		if (status > 0) {
+		if (status < 0) return status;
+		read_size = omron_get_command_return(dev, response_len, response);
+		if (read_size == OMRON_ERR_BADDATA) {
 			DPRINTF("garbled (resp_len=%d)\n", response_len);
+			// We'll just loop through and try again...
+			//FIXME: need to add some logic to prevent infinite looping
+		} else if (read_size < 0) {
+			return read_size;
 		}
 		if (mode == PEDOMETER_MODE) {
 			DPRINTF("Sleeping\n");
@@ -272,12 +287,9 @@ static int omron_exchange_cmd(omron_device *dev,
 			timeout.tv_usec = 200000;
 			select(0, NULL, NULL, NULL, &timeout);
 		}
-	} while (status > 0);
+	} while (read_size <= 0);
 
-	if (status < 0)
-		DPRINTF("omron_exchange_cmd: I/O error, status=%d\n",
-			status);
-	return status;
+	return read_size;
 }
 
 static int
@@ -292,38 +304,41 @@ omron_dev_info_command(omron_device* dev,
 	status = omron_exchange_cmd(dev, PEDOMETER_MODE, strlen(cmd),
 			   (const unsigned char*) cmd,
 			   result_max_len+3, tmp);
-	if (status) return status;
-	memcpy(result, tmp + 3, result_max_len);
-	return 0;
+	if (status < 0) return status;
+        if (status < 3) return OMRON_ERR_DEVIO;
+	memcpy(result, tmp + 3, status - 3);
+	return status - 3;
 }
 
 //platform independant functions
-OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, unsigned char* data)
+OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, unsigned char* data, int data_size)
 {
 	int status;
 
-	status = omron_dev_info_command(dev, "VER00", data, 12);
-	if (status) return status;
-	data[12] = 0;
-	return 0;
+	status = omron_dev_info_command(dev, "VER00", data, data_size-1);
+	if (status < 0) return status;
+	data[status] = 0;
+	return status;
 }
 
-OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, unsigned char* data)
+OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, unsigned char* data, int data_size)
 {
 	int status;
 
-	status = omron_dev_info_command(dev, "PRF00", data, 11);
-	if (status) return status;
-	return 0;
+	status = omron_dev_info_command(dev, "PRF00", data, data_size-1);
+	if (status < 0) return status;
+	data[status] = 0;
+	return status;
 }
 
-OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, unsigned char* data)
+OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, unsigned char* data, int data_size)
 {
 	int status;
 
-	status = omron_dev_info_command(dev, "SRL00", data, 8);
-	if (status) return status;
-	return 0;
+	status = omron_dev_info_command(dev, "SRL00", data, data_size-1);
+	if (status < 0) return status;
+	data[status] = 0;
+	return status;
 }
 
 //daily data information
@@ -334,15 +349,12 @@ OMRON_DECLSPEC int omron_get_daily_data_count(omron_device* dev, unsigned char b
 		{ 'G', 'D', 'C', 0x00, bank, 0x00, 0x00, bank };
 	int status;
 
-	status = omron_exchange_cmd(dev, DAILY_INFO_MODE, 8, command,
+	status = omron_exchange_cmd(dev, DAILY_INFO_MODE, sizeof(command), command,
 			   sizeof(data), data);
 	if (status < 0) {
 		return status;
-	} else if (status > 0) {
-		// This shouldn't ever happen, but let's be careful just to
-		// make sure a weird return from omron_exchange_cmd doesn't get
-		// mistaken for a count.
-		return E_NPUTIL_DRIVER_ERROR;
+	} else if (status != sizeof(data)) {
+		return OMRON_ERR_BADDATA;
 	}
 	DPRINTF("Data units found: %d\n", (int)data[6]);
 	return (int)data[6];
@@ -359,7 +371,7 @@ OMRON_DECLSPEC omron_bp_day_info omron_get_daily_bp_data(omron_device* dev, int 
 	memset(&r, 0 , sizeof(r));
 	memset(data, 0, sizeof(data));
 
-	status = omron_exchange_cmd(dev, DAILY_INFO_MODE, 8, command,
+	status = omron_exchange_cmd(dev, DAILY_INFO_MODE, sizeof(command), command,
 			   sizeof(data), data);
 
 	//printf("Daily data:");
@@ -385,7 +397,7 @@ OMRON_DECLSPEC omron_bp_day_info omron_get_daily_bp_data(omron_device* dev, int 
 	// }
 	// return r;
 
-	if (status || omron_check_success(data, 0))
+	if (status != sizeof(data) || omron_check_success(data))
 	{
 		r.present = 0;
 	}
@@ -428,10 +440,10 @@ OMRON_DECLSPEC omron_bp_week_info omron_get_weekly_bp_data(omron_device* dev, in
 	memset(&r, 0 , sizeof(r));
 	memset(data, 0, sizeof(data));
 
-	status = omron_exchange_cmd(dev, WEEKLY_INFO_MODE, 9, command,
+	status = omron_exchange_cmd(dev, WEEKLY_INFO_MODE, sizeof(command), command,
 			   sizeof(data), data);
 
-	if (status || omron_check_success(data, 0))
+	if (status != sizeof(data) || omron_check_success(data))
 	{
 		r.present = 0;
 	}
@@ -457,10 +469,14 @@ OMRON_DECLSPEC omron_pd_profile_info omron_get_pd_profile(omron_device* dev)
 	omron_pd_profile_info profile_info;
 	int status;
 
-	status = omron_dev_info_command(dev, "PRF00", data, 11);
-	//FIXME: We need a way to return an error result from this function
-	profile_info.weight = bcd_to_int(data, 2, 4) / 10;
-	profile_info.stride = bcd_to_int(data, 6, 4) / 10;
+	status = omron_dev_info_command(dev, "PRF00", data, sizeof(data));
+	if (status == sizeof(data)) {
+		profile_info.weight = bcd_to_int(data, 2, 4) / 10;
+		profile_info.stride = bcd_to_int(data, 6, 4) / 10;
+	} else {
+		//FIXME: We need a way to return an error result from this function
+		memset(&profile_info, 0, sizeof(profile_info));
+	}
 	return profile_info;
 }
 
@@ -470,8 +486,9 @@ OMRON_DECLSPEC int omron_clear_pd_memory(omron_device* dev)
 	int status;
 
 	status = omron_exchange_cmd(dev, PEDOMETER_MODE, strlen("CTD00"),"CTD00", 2, data);
-	if (status) return status;
-	return omron_check_success(data, 0);
+	if (status < 0) return status;
+	if (status != 2) return OMRON_ERR_BADDATA;
+	return omron_check_success(data);
 }
 
 OMRON_DECLSPEC omron_pd_count_info omron_get_pd_data_count(omron_device* dev)
@@ -480,10 +497,14 @@ OMRON_DECLSPEC omron_pd_count_info omron_get_pd_data_count(omron_device* dev)
 	unsigned char data[5];
 	int status;
 
-	status = omron_dev_info_command(dev, "CNT00", data, 5);
-	//FIXME: We need a way to return an error result from this function
-	count_info.daily_count = data[1];
-	count_info.hourly_count = data[3];
+	status = omron_dev_info_command(dev, "CNT00", data, sizeof(data));
+	if (status == sizeof(data)) {
+		count_info.daily_count = data[1];
+		count_info.hourly_count = data[3];
+	} else {
+		//FIXME: We need a way to return an error result from this function
+		memset(&count_info, 0, sizeof(count_info));
+	}
 	return count_info;
 }
 
@@ -497,14 +518,18 @@ OMRON_DECLSPEC omron_pd_daily_data omron_get_pd_daily_data(omron_device* dev, in
 
 	status = omron_exchange_cmd(dev, PEDOMETER_MODE, sizeof(command), command,
 			   sizeof(data), data);
-	//FIXME: We need a way to return an error result from this function
-	daily_data.total_steps = bcd_to_int2(data, 6, 5);
-	daily_data.total_aerobic_steps = bcd_to_int2(data, 11, 5);
-	daily_data.total_aerobic_walking_time = bcd_to_int2(data, 16, 4);
-	daily_data.total_calories = bcd_to_int2(data, 20, 5);
-	daily_data.total_distance = bcd_to_int2(data, 25, 5) / 100.0;
-	daily_data.total_fat_burn = bcd_to_int2(data, 30, 4) / 10.0;
-	daily_data.day_serial = day;
+	if (status == sizeof(data)) {
+		daily_data.total_steps = bcd_to_int2(data, 6, 5);
+		daily_data.total_aerobic_steps = bcd_to_int2(data, 11, 5);
+		daily_data.total_aerobic_walking_time = bcd_to_int2(data, 16, 4);
+		daily_data.total_calories = bcd_to_int2(data, 20, 5);
+		daily_data.total_distance = bcd_to_int2(data, 25, 5) / 100.0;
+		daily_data.total_fat_burn = bcd_to_int2(data, 30, 4) / 10.0;
+		daily_data.day_serial = day;
+	} else {
+		//FIXME: We need a way to return an error result from this function
+		memset(&daily_data, 0, sizeof(daily_data));
+	}
 	return daily_data;
 }
 
@@ -524,7 +549,7 @@ OMRON_DECLSPEC omron_pd_hourly_data* omron_get_pd_hourly_data(omron_device* dev,
 			{ 'G', 'T', 'D', 0x00, 0, day, i + 1, day ^ (i + 1)};
 		status = omron_exchange_cmd(dev, PEDOMETER_MODE, sizeof(command), command,
 						   sizeof(data), data);
-		if (status) {
+		if (status < sizeof(data)) {
 			//FIXME: would be better if we had a way to return an
 			//       actual error code instead of just NULL
 			free(hourly_data);

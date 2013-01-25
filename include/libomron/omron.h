@@ -20,9 +20,12 @@
  *
  ******************************************************************************/
 
-#define E_NPUTIL_DRIVER_ERROR -1
-#define E_NPUTIL_NOT_INITED -2
-#define E_NPUTIL_NOT_OPENED -3
+#define OMRON_ERR_DEVIO   (-1)
+#define OMRON_ERR_NOTINIT (-2)
+#define OMRON_ERR_NOTOPEN (-3)
+#define OMRON_ERR_BUFSIZE (-4)
+#define OMRON_ERR_NEGRESP (-5)
+#define OMRON_ERR_BADDATA (-6)
 
 #include <stdint.h>
 
@@ -118,6 +121,8 @@ typedef struct
 {
 	/// Device implementation
 	omron_device_impl device;
+	int input_size;
+	int output_size;
 	/// Mode the device is currently in
 	omron_mode device_mode;
 } omron_device;
@@ -366,7 +371,7 @@ extern "C" {
 	 *
 	 * @return > 0 if ok, otherwise < 0
 	 */
-	OMRON_DECLSPEC int omron_read_data(omron_device* dev, uint8_t *input_report);
+	OMRON_DECLSPEC int omron_read_data(omron_device* dev, uint8_t *report_buf, int report_size);
 
 	/**
 	 * Writes data to the device
@@ -376,7 +381,7 @@ extern "C" {
 	 *
 	 * @return > 0 if ok, otherwise < 0
 	 */
-	OMRON_DECLSPEC int omron_write_data(omron_device* dev, uint8_t *output_report);
+	OMRON_DECLSPEC int omron_write_data(omron_device* dev, uint8_t *report_buf, int report_size);
 
 	////////////////////////////////////////////////////////////////////////////////////
 	//
@@ -392,7 +397,7 @@ extern "C" {
 	 *
 	 * @return > 0 if ok, otherwise < 0
 	 */
-	OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, uint8_t* data);
+	OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, uint8_t* data, int data_size);
 
 	/**
 	 * Retrieves the version number of the device
@@ -402,7 +407,7 @@ extern "C" {
 	 *
 	 * @return > 0 if ok, otherwise < 0
 	 */
-	OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, uint8_t* data);
+	OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, uint8_t* data, int data_size);
 
 	////////////////////////////////////////////////////////////////////////////////////
 	//
@@ -418,7 +423,7 @@ extern "C" {
 	 *
 	 * @return 0 if successful, < 0 otherwise
 	 */
-	OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, uint8_t* data);
+	OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, uint8_t* data, int data_size);
 
 	/**
 	 * Gets a specific data index from a specific bank of readings

@@ -55,7 +55,7 @@ int main(int argc, char** argv)
 	//printf("Opened omron 720IT\n");
 
 	
-	ret = omron_get_device_version(test, str);
+	ret = omron_get_device_version(test, str, sizeof(str));
 	if(ret < 0)
 	{
 		printf("Cannot get device version!\n");
