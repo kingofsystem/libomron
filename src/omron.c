@@ -13,28 +13,49 @@
  */
 
 #include "libomron/omron.h"
+#include "omron_internal.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
-//#define DEBUG
+int _omron_debug_level = -1; // This will get set initially from omron_create()
 
-#ifdef DEBUG
-#define IF_DEBUG(x)	do { x; } while (0)
-#else
-#define IF_DEBUG(x)	do { } while (0)
-#endif
+OMRON_DECLSPEC void omron_set_debug_level(int level) {
+	char *env_setting;
+	char *endptr;
+	int new_level;
 
-#define DPRINTF(args, ...)	IF_DEBUG(printf(args))
+	if (level < 0) {
+		if (_omron_debug_level < 0) {
+			level = DEBUG_DEFAULT_LEVEL;
+		} else {
+			return;
+		}
+	}
+	new_level = level;
 
-static void hexdump(uint8_t *data, int n_bytes)
+	env_setting = getenv(DEBUG_ENV_VAR);
+	if (env_setting) {
+		// Any setting in the environment will override anything the
+		// program sets.
+		new_level = strtol(env_setting, &endptr, 0);
+		if (*endptr || (endptr == env_setting)) {
+			// Invalid chars in value.  Ignore env setting.
+			DPRINTF(_omron_debug_level, "Invalid value for %s environment variable ('%s').  Ignoring.\n", DEBUG_ENV_VAR, env_setting);
+			new_level = level;
+		}
+	}
+	_omron_debug_level = new_level;
+}
+
+void omron_hexdump(uint8_t *data, int n_bytes)
 {
 	while (n_bytes--) {
-		printf(" %02x", *(unsigned char*) data);
+		fprintf(stderr, " %02x", *(unsigned char*) data);
 		data++;
 	}
-	printf("\n");
+	fprintf(stderr, "\n");
 }
 
 int bcd_to_int(unsigned char *data, int start, int length)
@@ -85,9 +106,8 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 	int current_write_size;
 	unsigned char output_report[dev->output_size];
 
-	DPRINTF("omron_send:");
-	IF_DEBUG(hexdump(buf, size));
-	DPRINTF("\n");
+	//FIXME: make this print a human-readable output for the "clear" cmd
+	MSG_INFO("Sending %c%c%c command...\n", buf[0], buf[1], buf[2]);
 
 	while(total_write_size < size)
 	{
@@ -100,6 +120,7 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 		       current_write_size);
 
 		if (omron_write_data(dev, output_report, sizeof(output_report))) {
+			MSG_ERROR("write failed\n");
 			return OMRON_ERR_DEVIO;
 		}
 		total_write_size += current_write_size;
@@ -110,10 +131,15 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 
 int omron_check_success(unsigned char *input_report)
 {
-	if (input_report[0] != 'O' || input_report[1] != 'K') {
+	if (input_report[0] == 'O' && input_report[1] == 'K') {
+		//FIXME: we should check the checksum here too
+		return 0;
+	} else if (input_report[0] == 'N' && input_report[1] == 'O') {
+		MSG_DETAIL("Response = 'NO'\n");
 		return OMRON_ERR_NEGRESP;
 	}
-	return 0;
+	MSG_DETAIL("Response is not 'OK' or 'NO' (bad data?)\n");
+	return OMRON_ERR_BADDATA;
 }
 
 int omron_send_clear(omron_device* dev)
@@ -123,8 +149,11 @@ int omron_send_clear(omron_device* dev)
 	//unsigned char input_report[9];
 	unsigned char input_report[dev->input_size];
 	int status;
+
+	MSG_INFO("Sending clear command...\n")
 	// We don't really care whether the following call succeeds or not
 	status = omron_read_data(dev, input_report, sizeof(input_report));
+	MSG_DETAIL("Initial read result: %d (ignored)\n", status);
 	do {
 		status = omron_send_command(dev, sizeof(zero), zero);
 		if (status < 0) return status;
@@ -132,6 +161,7 @@ int omron_send_clear(omron_device* dev)
 		if (status < 0) return status;
 	} while (omron_check_success(input_report + 1) != 0);
 
+	MSG_INFO("Clear successful.\n")
 	return 0;
 }
 
@@ -146,7 +176,7 @@ xor_checksum(unsigned char *data, int len)
 		checksum ^= *(data++);
 
 	if (checksum)
-		DPRINTF("bad checksum 0x%x\n", checksum);
+		MSG_DETAIL("bad checksum: 0x%x != 0\n", checksum);
 
 	return checksum;
 }
@@ -168,32 +198,33 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 	int read_result;
 	const int max_data_chunk = sizeof(input_report) - 1;
 
-	DPRINTF("\n");		/* AJR */
 	do {
 		read_result = omron_read_data(dev, input_report, sizeof(input_report));
-		DPRINTF("AJR read result=%d.\n", read_result);
 		if (read_result < 0) {
-			DPRINTF("omron_get_command_return: read_result %d < zero\n", read_result);
 			return read_result;
+		} else {
+			MSG_DETAIL("read result=%d\n", read_result);
 		}
 
 		current_read_size = input_report[0];
 		if (current_read_size < 0) {
+			MSG_ERROR("Invalid size byte: %d\n", current_read_size);
 			return OMRON_ERR_DEVIO;
 		} else if (current_read_size > sizeof(input_report)) {
+			MSG_ERROR("Invalid size byte: %d\n", current_read_size);
 			return OMRON_ERR_DEVIO;
 		} else if (current_read_size > max_data_chunk) {
+			MSG_WARN("(size byte == report size.  Adjusting to report size - 1)\n");
 			current_read_size = max_data_chunk; /* FIXME? Bug? */
 		}
 
-		IF_DEBUG(hexdump(input_report, current_read_size+1));
 		/* printf(" current_read=%d size=%d total_read_size=%d.\n", */
 		/* 		current_read_size, size, total_read_size); */
 
 		if (current_read_size > size - total_read_size) {
 			// This shouldn't happen.  Just ignore any extra we got
 			// back..
-			DPRINTF("omron_get_command_return: Received more data than expected (%d > %d).  Ignoring extra.", total_read_size + current_read_size, size);
+			MSG_WARN("Received more data than expected (%d > %d).  Ignoring extra.", total_read_size + current_read_size, size);
 			current_read_size = size - total_read_size;
 		}
 
@@ -204,30 +235,41 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 		if(!has_checked && total_read_size >= 2)
 		{
 			if (total_read_size == 2 &&
-			    data[0] == 'N' && data[1] == 'O')
+			    data[0] == 'N' && data[1] == 'O') {
+				MSG_INFO("Received NO response.\n");
 				return 0; /* "NO" is valid response */
+			}
 
 			if (strncmp((const char*) data, "END\r\n",
-				    total_read_size) == 0)
+				    total_read_size) == 0) {
+				//FIXME: should we just return at this point?
 				has_checked = (total_read_size >= 5);
-			else {
-				if (data[0] != 'O' || data[1] != 'K')
+			} else {
+				if (data[0] != 'O' || data[1] != 'K') {
+					MSG_ERROR("Response is not OK, NO, or END: bad data.\n");
 					return OMRON_ERR_BADDATA; /* garbled response */
-				
+				}
 				has_checked = 1;
 			}
 		}
 	} while ((total_read_size < size) && (current_read_size == max_data_chunk));
+	MSG_DETAIL("Completed read.  requested size=%d, read size=%d\n", total_read_size, size);
 
 	if (total_read_size < 3) { //FIXME: should this be 2?
+		MSG_ERROR("Response is too short: bad data.\n");
 		return OMRON_ERR_BADDATA;
 	}
+	//FIXME: check for END here?
 	if (data[0] != 'O' || data[1] != 'K') {
+		//FIXME: can we ever get here?
+		MSG_ERROR("Response is not OK, NO, or END: bad data.\n");
 		return OMRON_ERR_BADDATA;
 	}
 	if (xor_checksum(data+2, total_read_size-2)) {
+		MSG_ERROR("Response has bad checksum: bad data.\n");
 		return OMRON_ERR_BADDATA;
 	}
+	MSG_INFO("Received OK response: size=%d\n", total_read_size);
 	return total_read_size;
 }
 
@@ -243,11 +285,6 @@ int omron_check_mode(omron_device* dev, omron_mode mode)
 	{
 		dev->device_mode = mode;
 		return omron_send_clear(dev);
-	}
-	else
-	{
-		DPRINTF("omron_set_mode: I/O error, status=%d\n",
-			ret);		
 	}
 	return ret;
 }
@@ -272,14 +309,13 @@ static int omron_exchange_cmd(omron_device *dev,
 		if (status < 0) return status;
 		read_size = omron_get_command_return(dev, response_len, response);
 		if (read_size == OMRON_ERR_BADDATA) {
-			DPRINTF("garbled (resp_len=%d)\n", response_len);
 			// We'll just loop through and try again...
 			//FIXME: need to add some logic to prevent infinite looping
 		} else if (read_size < 0) {
 			return read_size;
 		}
 		if (mode == PEDOMETER_MODE) {
-			DPRINTF("Sleeping\n");
+			MSG_INFO("Sleeping for retry...\n");
 			// Adding a short wait to see if it helps the bad data
 			// give it 0.15 seconds to recover
 			timeout.tv_sec = 0;
@@ -310,14 +346,23 @@ omron_dev_info_command(omron_device* dev,
 }
 
 //platform independant functions
+OMRON_DECLSPEC omron_device* omron_create()
+{
+	omron_set_debug_level(-1); // Initialize to default if not already set
+	MSG_INFO("Creating new device.\n");
+	return omron_create_device();
+}
+
 OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, unsigned char* data, int data_size)
 {
 	int status;
+	const int response_size = 12;
 
-	if (data_size < 13) {
+	if (data_size <= response_size) {
+		MSG_ERROR("Supplied buffer too small (%d < %d)\n", data_size, response_size + 1);
 		return OMRON_ERR_BUFSIZE;
 	}
-	status = omron_dev_info_command(dev, "VER00", data, 12);
+	status = omron_dev_info_command(dev, "VER00", data, response_size);
 	if (status < 0) return status;
 	data[status] = 0;
 	return status;
@@ -326,11 +371,13 @@ OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, unsigned char* da
 OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, unsigned char* data, int data_size)
 {
 	int status;
+	const int response_size = 11;
 
-	if (data_size < 12) {
+	if (data_size <= response_size) {
+		MSG_ERROR("Supplied buffer too small (%d < %d)\n", data_size, response_size + 1);
 		return OMRON_ERR_BUFSIZE;
 	}
-	status = omron_dev_info_command(dev, "PRF00", data, 11);
+	status = omron_dev_info_command(dev, "PRF00", data, response_size);
 	if (status < 0) return status;
 	data[status] = 0;
 	return status;
@@ -339,11 +386,13 @@ OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, unsigned char* data, 
 OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, unsigned char* data, int data_size)
 {
 	int status;
+	const int response_size = 8;
 
-	if (data_size < 9) {
+	if (data_size <= response_size) {
+		MSG_ERROR("Supplied buffer too small (%d < %d)\n", data_size, response_size + 1);
 		return OMRON_ERR_BUFSIZE;
 	}
-	status = omron_dev_info_command(dev, "SRL00", data, 8);
+	status = omron_dev_info_command(dev, "SRL00", data, response_size);
 	if (status < 0) return status;
 	data[status] = 0;
 	return status;
@@ -362,9 +411,10 @@ OMRON_DECLSPEC int omron_get_daily_data_count(omron_device* dev, unsigned char b
 	if (status < 0) {
 		return status;
 	} else if (status != sizeof(data)) {
+		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		return OMRON_ERR_BADDATA;
 	}
-	DPRINTF("Data units found: %d\n", (int)data[6]);
+	MSG_INFO("Data units found: %d\n", (int)data[6]);
 	return (int)data[6];
 }
 
@@ -405,12 +455,14 @@ OMRON_DECLSPEC omron_bp_day_info omron_get_daily_bp_data(omron_device* dev, int 
 	// }
 	// return r;
 
-	if (status != sizeof(data) || omron_check_success(data))
-	{
+	if (status != sizeof(data)) {
+		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
+		//FIXME: We need a way to return an error result from this function
 		r.present = 0;
-	}
-	else
-	{
+	} else if (omron_check_success(data)) {
+		MSG_ERROR("Request failed.\n");
+		r.present = 0;
+	} else {
 		r.present = 1;
 		r.year = data[3];
 		r.month = data[4];
@@ -451,11 +503,14 @@ OMRON_DECLSPEC omron_bp_week_info omron_get_weekly_bp_data(omron_device* dev, in
 	status = omron_exchange_cmd(dev, WEEKLY_INFO_MODE, sizeof(command), command,
 			   sizeof(data), data);
 
-	if (status != sizeof(data) || omron_check_success(data))
-	{
+	if (status != sizeof(data)) {
+		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
+		//FIXME: We need a way to return an error result from this function
 		r.present = 0;
-	}
-	else {
+	} else if (omron_check_success(data)) {
+		MSG_ERROR("Request failed.\n");
+		r.present = 0;
+	} else {
 		r.present = 1;
 		/* printf("Weekly data:"); */
 		/* hexdump(data, sizeof(data)); */
@@ -482,6 +537,7 @@ OMRON_DECLSPEC omron_pd_profile_info omron_get_pd_profile(omron_device* dev)
 		profile_info.weight = bcd_to_int(data, 2, 4) / 10;
 		profile_info.stride = bcd_to_int(data, 6, 4) / 10;
 	} else {
+		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		//FIXME: We need a way to return an error result from this function
 		memset(&profile_info, 0, sizeof(profile_info));
 	}
@@ -510,6 +566,7 @@ OMRON_DECLSPEC omron_pd_count_info omron_get_pd_data_count(omron_device* dev)
 		count_info.daily_count = data[1];
 		count_info.hourly_count = data[3];
 	} else {
+		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		//FIXME: We need a way to return an error result from this function
 		memset(&count_info, 0, sizeof(count_info));
 	}
@@ -535,6 +592,7 @@ OMRON_DECLSPEC omron_pd_daily_data omron_get_pd_daily_data(omron_device* dev, in
 		daily_data.total_fat_burn = bcd_to_int2(data, 30, 4) / 10.0;
 		daily_data.day_serial = day;
 	} else {
+		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		//FIXME: We need a way to return an error result from this function
 		memset(&daily_data, 0, sizeof(daily_data));
 	}
@@ -557,7 +615,8 @@ OMRON_DECLSPEC omron_pd_hourly_data* omron_get_pd_hourly_data(omron_device* dev,
 			{ 'G', 'T', 'D', 0x00, 0, day, i + 1, day ^ (i + 1)};
 		status = omron_exchange_cmd(dev, PEDOMETER_MODE, sizeof(command), command,
 						   sizeof(data), data);
-		if (status < sizeof(data)) {
+		if (status != sizeof(data)) {
+			MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 			//FIXME: would be better if we had a way to return an
 			//       actual error code instead of just NULL
 			free(hourly_data);

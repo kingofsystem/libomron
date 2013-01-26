@@ -27,6 +27,12 @@
 #define OMRON_ERR_NEGRESP (-5)
 #define OMRON_ERR_BADDATA (-6)
 
+#define OMRON_DEBUG_ERROR   1
+#define OMRON_DEBUG_WARNING 2
+#define OMRON_DEBUG_INFO    3
+#define OMRON_DEBUG_DETAIL  4
+#define OMRON_DEBUG_DEVIO   5
+
 #include <stdint.h>
 
 #if defined(WIN32)
@@ -499,6 +505,19 @@ extern "C" {
 	 * @return 0 on success
 	 */
 	OMRON_DECLSPEC int omron_clear_pd_memory(omron_device* dev);
+
+	////////////////////////////////////////////////////////////////////////////////////
+	//
+	// Debugging
+	//
+	////////////////////////////////////////////////////////////////////////////////////
+
+	/**
+	 * Set the debugging level
+	 *
+	 * @param level Debug level
+	 */
+	OMRON_DECLSPEC void omron_set_debug_level(int level);
 
 #ifdef __cplusplus
 }

@@ -13,6 +13,7 @@
 
 
 #include "libomron/omron.h"
+#include "omron_internal.h"
 
 #include <api/setupapi.h>
 #include <api/hidsdi.h>
@@ -102,6 +103,7 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 	  Requires: the GUID returned by GetHidGuid.
 	*/
 
+	//FIXME: check return value
 	hDevInfo=SetupDiGetClassDevs
 		(&HidGuid,
 		 NULL,
@@ -178,6 +180,7 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 
 			//Call the function again, this time passing it the returned buffer size.
 
+			//FIXME: check return value
 			Result = SetupDiGetDeviceInterfaceDetail
 				(hDevInfo,
 				 &devInfoData,
@@ -199,6 +202,7 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 			*/
 
 			
+			//FIXME: check return value
 			dev->device._dev =CreateFile
 				(detailData->DevicePath,
 				 GENERIC_READ | GENERIC_WRITE,
@@ -222,6 +226,7 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 
 			Attributes.Size = sizeof(Attributes);
 
+			//FIXME: check return value
 			Result = HidD_GetAttributes
 				(dev->device._dev,
 				 &Attributes);
@@ -241,6 +246,7 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 				{
 					MyDeviceDetected = TRUE;
 					MyDevicePathName = detailData->DevicePath;
+					//FIXME: check return value?
 					GetDeviceCapabilities(dev->device._dev, &Capabilities);
 					dev->input_size = Capabilities.InputReportByteLength;
 					dev->output_size = Capabilities.OutputReportByteLength;
@@ -266,7 +272,8 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 	SetupDiDestroyDeviceInfoList(hDevInfo);
 	if(get_count) return device_count;
 	if(MyDeviceDetected) return 0;
-	return -1;
+	MSG_ERROR("Could not find requested device (%d) to open\n", device_index);
+	return OMRON_ERR_DEVIO;
 }
 
 OMRON_DECLSPEC int omron_get_count(omron_device* dev, int VID, int PID)
@@ -288,12 +295,15 @@ OMRON_DECLSPEC int omron_close(omron_device* dev)
 int omron_set_mode(omron_device* dev, omron_mode mode)
 {
 	char feature_report[3] = {0x0, (mode & 0xff00) >> 8, (mode & 0x00ff)};
+
+	MSG_INFO("Setting mode to %04x\n", mode);
 	int ret = HidD_SetFeature(dev->device._dev, feature_report, sizeof(feature_report));
 	if(!ret)
 	{
-		printf("Cannot send feature! %d\n", GetLastError());
+		MSG_ERROR("Cannot set feature! %d\n", GetLastError());
 		return OMRON_ERR_DEVIO;
 	}
+	MSG_DETAIL("Mode set successfully.\n");
 	return 0;
 }
 
@@ -301,33 +311,39 @@ OMRON_DECLSPEC int omron_read_data(omron_device* dev, unsigned char *report_buf,
 {
 	int result;
 	char read_buf[dev->input_size + 1];
-	DWORD bytes_read;
+	DWORD trans;
 
 	if (report_size < dev->input_size) {
+		MSG_ERROR("Supplied buffer too small (%d < %d)\n", report_size, dev->input_size);
 		return OMRON_ERR_BUFSIZE;
 	}
 	result = ReadFile(dev->device._dev,
 			  read_buf,
 			  dev->input_size + 1,
-			  &bytes_read,
+			  &trans,
 			  NULL);
-	memcpy(report_buf, read_buf + 1, bytes_read - 1);
-	if (result) {
-		// Windows uses nonzero to mean "success"
-		if (bytes_read == dev->input_size + 1) {
-			return 0;
-		}
+	if (!result) {
+		// Windows uses zero to mean "failed"
+		MSG_ERROR("Read failed: %d\n", GetLastError());
+		return OMRON_ERR_DEVIO;
 	}
-	return OMRON_ERR_DEVIO;
+	trans--;
+	memcpy(report_buf, read_buf + 1, trans);
+	MSG_HEXDUMP(OMRON_DEBUG_DEVIO, "read: ", report_buf, trans);
+	if (trans != dev->input_size) {
+		MSG_ERROR("Transfer size (%d) did not match expected (%d)\n", trans, dev->input_size);
+	}
+	return 0;
 }
 
 OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *report_buf, int report_size)
 {
 	int result;
 	char command[dev->output_size + 1];
-	DWORD bytes_written;
+	DWORD trans;
 
 	if (report_size > dev->output_size) {
+		MSG_ERROR("Supplied buffer too large (%d > %d)\n", report_size, dev->output_size);
 		return OMRON_ERR_BUFSIZE;
 	}
 	command[0] = 0x0;
@@ -335,18 +351,22 @@ OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *report_buf
 	result = WriteFile(dev->device._dev,
 			   command,
 			   report_size,
-			   &bytes_written,
+			   &trans,
 			   (LPOVERLAPPED) &HIDOverlapped);
-	if (result) {
-		// Windows uses nonzero to mean "success"
-		if (bytes_written == report_size) {
-			return 0;
-		}
+	if (!result) {
+		// Windows uses zero to mean "failed"
+		MSG_ERROR("Write failed: %d\n", GetLastError());
+		return OMRON_ERR_DEVIO;
 	}
-	return OMRON_ERR_DEVIO;
+	MSG_HEXDUMP(OMRON_DEBUG_DEVIO, "wrote: ", report_buf, trans);
+	if (trans != dev->output_size) {
+		MSG_ERROR("Transfer size (%d) did not match expected (%d)\n", trans, dev->output_size);
+		return OMRON_ERR_DEVIO;
+	}
+	return 0;
 }
 
-OMRON_DECLSPEC omron_device* omron_create()
+OMRON_DECLSPEC omron_device* omron_create_device()
 {
 	omron_device* s = (omron_device*)malloc(sizeof(omron_device));
 	s->device._is_open = 0;
