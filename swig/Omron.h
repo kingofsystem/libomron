@@ -13,11 +13,6 @@ static const int VID = OMRON_VID;
 static const int PID = OMRON_PID;
 
 
-// Not in omron.h's API?
-extern "C" {
-int omron_get_daily_data_count(omron_device* dev, unsigned char bank);
-}
-
 #include <string>
 
 class Omron {

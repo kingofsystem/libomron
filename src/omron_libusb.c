@@ -41,7 +41,6 @@ omron_device* omron_create_device()
 int omron_get_count(omron_device* s, int device_vid, int device_pid)
 {
 	struct libusb_device **devs;
-	struct libusb_device *found = NULL;
 	struct libusb_device *dev;
 	size_t i = 0;
 	int count = 0;

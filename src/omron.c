@@ -170,8 +170,6 @@ xor_checksum(unsigned char *data, int len)
 {
 	unsigned char checksum = 0;
 
-	unsigned int begin_len = len;
-	
 	while (len--)
 		checksum ^= *(data++);
 
@@ -549,7 +547,7 @@ OMRON_DECLSPEC int omron_clear_pd_memory(omron_device* dev)
 	unsigned char data[2];
 	int status;
 
-	status = omron_exchange_cmd(dev, PEDOMETER_MODE, strlen("CTD00"),"CTD00", 2, data);
+	status = omron_exchange_cmd(dev, PEDOMETER_MODE, 5, (unsigned char*)"CTD00", 2, data);
 	if (status < 0) return status;
 	if (status != 2) return OMRON_ERR_BADDATA;
 	return omron_check_success(data);

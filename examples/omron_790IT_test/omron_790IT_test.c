@@ -31,7 +31,7 @@ int main(int argc, char** argv)
 		printf("Cannot open omron 790IT!\n");
 		return 1;
 	}
-	printf("Opened omron 790IT\n", ret);
+	printf("Opened omron 790IT\n");
 
 	ret = omron_get_device_version(test, str, sizeof(str));
 	if(ret < 0)
@@ -40,7 +40,7 @@ int main(int argc, char** argv)
 	}
 	else
 	{
-		printf("Device serial: %s\n", str, sizeof(str));
+		printf("Device version: %s\n", str);
 	}
 
 	ret = omron_get_bp_profile(test, str, sizeof(str));

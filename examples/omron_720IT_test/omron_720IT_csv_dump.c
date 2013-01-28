@@ -11,12 +11,8 @@ int main(int argc, char** argv)
 	omron_device* test = omron_create();
 	int ret;
 	int i;
-	int day;
 	int data_count;
 	unsigned char str[30];
-	unsigned char data[37];
-	int bank = 0;
-	omron_pd_profile_info p;
 	omron_pd_count_info c;
 	char time_str[20];
 	struct tm *timeptr;

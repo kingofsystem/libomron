@@ -9,13 +9,9 @@ int main(int argc, char** argv)
 	int i;
 	int data_count;
 	unsigned char str[30];
-	int bank = 0;
 	omron_pd_profile_info p;
 	omron_pd_count_info c;
 	
-	if (argc > 1)
-		bank = atoi(argv[1]);
-
 	if(test == NULL)
 	{
 		printf("Cannot initialize USB core!\n");
@@ -46,7 +42,7 @@ int main(int argc, char** argv)
 	}
 	else
 	{
-		printf("Device serial: %s\n", str);
+		printf("Device version: %s\n", str);
 	}
 
 	p = omron_get_pd_profile(test);

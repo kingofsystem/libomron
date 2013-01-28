@@ -432,6 +432,15 @@ extern "C" {
 	OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, uint8_t* data, int data_size);
 
 	/**
+	 * Query device for number of valid daily data packets
+	 *
+	 * @param dev Device to query
+	 *
+	 * @return Number of available data packets
+	 */
+	OMRON_DECLSPEC int omron_get_daily_data_count(omron_device* dev, unsigned char bank);
+
+	/**
 	 * Gets a specific data index from a specific bank of readings
 	 *
 	 * @param dev Device to query
