@@ -300,7 +300,7 @@ static int omron_exchange_cmd(omron_device *dev,
 	
 	// Retry command if the response is garbled, but accept "NO" as
 	// a valid response.
-	do {
+	while (1) {
 		status = omron_check_mode(dev, mode);
 		if (status < 0) return status;
 		status = omron_send_command(dev, cmd_len, cmd);
@@ -309,18 +309,16 @@ static int omron_exchange_cmd(omron_device *dev,
 		if (read_size == OMRON_ERR_BADDATA) {
 			// We'll just loop through and try again...
 			//FIXME: need to add some logic to prevent infinite looping
-		} else if (read_size < 0) {
-			return read_size;
+		} else {
+			break;
 		}
-		if (mode == PEDOMETER_MODE) {
-			MSG_INFO("Sleeping for retry...\n");
-			// Adding a short wait to see if it helps the bad data
-			// give it 0.15 seconds to recover
-			timeout.tv_sec = 0;
-			timeout.tv_usec = 200000;
-			select(0, NULL, NULL, NULL, &timeout);
-		}
-	} while (read_size <= 0);
+		// Adding a short wait to see if it helps the bad data
+		// give it 0.15 seconds to recover
+		MSG_INFO("Sleeping for retry...\n");
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 200000;
+		select(0, NULL, NULL, NULL, &timeout);
+	};
 
 	return read_size;
 }
