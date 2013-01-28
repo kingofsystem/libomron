@@ -377,7 +377,7 @@ extern "C" {
 	 *
 	 * @return > 0 if ok, otherwise < 0
 	 */
-	OMRON_DECLSPEC int omron_read_data(omron_device* dev, uint8_t *report_buf, int report_size);
+	OMRON_DECLSPEC int omron_read_data(omron_device* dev, uint8_t *report_buf, int report_size, int timeout);
 
 	/**
 	 * Writes data to the device
@@ -387,7 +387,7 @@ extern "C" {
 	 *
 	 * @return > 0 if ok, otherwise < 0
 	 */
-	OMRON_DECLSPEC int omron_write_data(omron_device* dev, uint8_t *report_buf, int report_size);
+	OMRON_DECLSPEC int omron_write_data(omron_device* dev, uint8_t *report_buf, int report_size, int timeout);
 
 	////////////////////////////////////////////////////////////////////////////////////
 	//

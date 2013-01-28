@@ -201,17 +201,29 @@ int omron_set_mode(omron_device* dev, omron_mode mode)
 	return 0;
 }
 
-int omron_read_data(omron_device* dev, uint8_t* report_buf, int report_size)
+int omron_read_data(omron_device* dev, uint8_t* report_buf, int report_size, int timeout)
 {
 	int trans;
 	int status;
+	int timeout_ok = (timeout < 0);
 
+	if (timeout_ok) {
+		timeout = -timeout;
+	}
 	if (report_size < dev->input_size) {
 		MSG_ERROR("Supplied buffer too small (%d < %d)\n", report_size, dev->input_size);
 		return OMRON_ERR_BUFSIZE;
 	}
-	status = libusb_bulk_transfer(dev->device._device, OMRON_IN_ENDPT, report_buf, dev->input_size, &trans, 1000);
+	status = libusb_bulk_transfer(dev->device._device, OMRON_IN_ENDPT, report_buf, dev->input_size, &trans, timeout);
 	if (status != 0) {
+		if (status == LIBUSB_ERROR_TIMEOUT) {
+			if (timeout_ok) {
+				MSG_DEVIO("(USB operation timed out)\n");
+				return 0;
+			}
+			MSG_ERROR("USB operation timed out.\n");
+			return OMRON_ERR_DEVIO;
+		}
 		MSG_ERROR("libusb_bulk_transfer returned %d\n", status);
 		return OMRON_ERR_DEVIO;
 	}
@@ -220,20 +232,32 @@ int omron_read_data(omron_device* dev, uint8_t* report_buf, int report_size)
 		MSG_ERROR("Transfer size (%d) did not match expected (%d)\n", trans, dev->input_size);
 		return OMRON_ERR_DEVIO;
 	}
-	return 0;
+	return trans;
 }
 
-int omron_write_data(omron_device* dev, uint8_t* report_buf, int report_size)
+int omron_write_data(omron_device* dev, uint8_t* report_buf, int report_size, int timeout)
 {
 	int trans;
 	int status;
+	int timeout_ok = (timeout < 0);
 
+	if (timeout_ok) {
+		timeout = -timeout;
+	}
 	if (report_size > dev->output_size) {
 		MSG_ERROR("Supplied buffer too large (%d > %d)\n", report_size, dev->output_size);
 		return OMRON_ERR_BUFSIZE;
 	}
-	status = libusb_bulk_transfer(dev->device._device, OMRON_OUT_ENDPT, report_buf, report_size, &trans, 1000);
+	status = libusb_bulk_transfer(dev->device._device, OMRON_OUT_ENDPT, report_buf, report_size, &trans, timeout);
 	if (status != 0) {
+		if (status == LIBUSB_ERROR_TIMEOUT) {
+			if (timeout_ok) {
+				MSG_DEVIO("(USB operation timed out)\n");
+				return 0;
+			}
+			MSG_ERROR("USB operation timed out.\n");
+			return OMRON_ERR_DEVIO;
+		}
 		MSG_ERROR("libusb_bulk_transfer returned %d\n", status);
 		return OMRON_ERR_DEVIO;
 	}
@@ -242,6 +266,6 @@ int omron_write_data(omron_device* dev, uint8_t* report_buf, int report_size)
 		MSG_ERROR("Transfer size (%d) did not match expected (%d)\n", trans, dev->input_size);
 		return OMRON_ERR_DEVIO;
 	}
-	return 0;
+	return trans;
 }
 

@@ -41,6 +41,43 @@ DWORD								ReportType;
 ULONG								Required;
 TCHAR*								ValueToDisplay;
 
+/* Note: The following ReadFileTimeout and WriteFileTimeout routines require
+ *       hFile to have been opened with FILE_FLAG_OVERLAPPED
+ */
+static BOOL ReadFileTimeout(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, DWORD dwMilliseconds) {
+	OVERLAPPED overlapped;
+	BOOL result;
+
+	result = ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, NULL, &overlapped);
+	if (!result && (GetLastError() != ERROR_IO_PENDING)) {
+		return result;
+	}
+	result = GetOverlappedResultEx(hFile, &overlapped, lpNumberOfBytesRead, dwMilliseconds, FALSE);
+	if (!result && (GetLastError() == ERROR_IO_INCOMPLETE)) {
+		CancelIo(hFile);
+		GetOverlappedResult(hFile, &overlapped, lpNumberOfBytesRead, TRUE);
+		SetLastError(ERROR_IO_INCOMPLETE);
+	}
+	return result;
+}
+
+static BOOL WriteFileTimeout(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten, DWORD dwMilliseconds) {
+	OVERLAPPED overlapped;
+	BOOL result;
+
+	result = WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, NULL, &overlapped);
+	if (!result && (GetLastError() != ERROR_IO_PENDING)) {
+		return result;
+	}
+	result = GetOverlappedResultEx(hFile, &overlapped, lpNumberOfBytesWritten, dwMilliseconds, FALSE);
+	if (!result && (GetLastError() == ERROR_IO_INCOMPLETE)) {
+		CancelIo(hFile);
+		GetOverlappedResult(hFile, &overlapped, lpNumberOfBytesWritten, TRUE);
+		SetLastError(ERROR_IO_INCOMPLETE);
+	}
+	return result;
+}
+
 void GetDeviceCapabilities(HANDLE DeviceHandle, HIDP_CAPS *pCaps)
 {
 	//Get the Capabilities structure for the device.
@@ -203,13 +240,13 @@ int omron_open_win32(omron_device* dev, int VID, int PID, unsigned int device_in
 
 			
 			//FIXME: check return value
-			dev->device._dev =CreateFile
+			dev->device._dev = CreateFile
 				(detailData->DevicePath,
 				 GENERIC_READ | GENERIC_WRITE,
 				 FILE_SHARE_READ|FILE_SHARE_WRITE,
 				 (LPSECURITY_ATTRIBUTES)NULL,
 				 OPEN_EXISTING,
-				 0,
+				 FILE_FLAG_OVERLAPPED,
 				 NULL);
 
 			/*
@@ -307,23 +344,35 @@ int omron_set_mode(omron_device* dev, omron_mode mode)
 	return 0;
 }
 
-OMRON_DECLSPEC int omron_read_data(omron_device* dev, unsigned char *report_buf, int report_size)
+OMRON_DECLSPEC int omron_read_data(omron_device* dev, unsigned char *report_buf, int report_size, int timeout)
 {
-	int result;
+	BOOL result;
 	char read_buf[dev->input_size + 1];
 	DWORD trans;
+	int timeout_ok = (timeout < 0);
 
+	if (timeout_ok) {
+		timeout = -timeout;
+	}
 	if (report_size < dev->input_size) {
 		MSG_ERROR("Supplied buffer too small (%d < %d)\n", report_size, dev->input_size);
 		return OMRON_ERR_BUFSIZE;
 	}
-	result = ReadFile(dev->device._dev,
+	result = ReadFileTimeout(dev->device._dev,
 			  read_buf,
 			  dev->input_size + 1,
 			  &trans,
-			  NULL);
+			  timeout);
 	if (!result) {
 		// Windows uses zero to mean "failed"
+		if (GetLastError() == ERROR_IO_INCOMPLETE) {
+			if (timeout_ok) {
+				MSG_DEVIO("(USB operation timed out)\n");
+				return 0;
+			}
+			MSG_ERROR("USB operation timed out.\n");
+			return OMRON_ERR_DEVIO;
+		}
 		MSG_ERROR("Read failed: %d\n", GetLastError());
 		return OMRON_ERR_DEVIO;
 	}
@@ -333,28 +382,40 @@ OMRON_DECLSPEC int omron_read_data(omron_device* dev, unsigned char *report_buf,
 	if (trans != dev->input_size) {
 		MSG_ERROR("Transfer size (%d) did not match expected (%d)\n", trans, dev->input_size);
 	}
-	return 0;
+	return trans;
 }
 
-OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *report_buf, int report_size)
+OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *report_buf, int report_size, int timeout)
 {
-	int result;
+	BOOL result;
 	char command[dev->output_size + 1];
 	DWORD trans;
+	int timeout_ok = (timeout < 0);
 
+	if (timeout_ok) {
+		timeout = -timeout;
+	}
 	if (report_size > dev->output_size) {
 		MSG_ERROR("Supplied buffer too large (%d > %d)\n", report_size, dev->output_size);
 		return OMRON_ERR_BUFSIZE;
 	}
 	command[0] = 0x0;
 	memcpy(command + 1, report_buf, report_size);
-	result = WriteFile(dev->device._dev,
+	result = WriteFileTimeout(dev->device._dev,
 			   command,
 			   report_size,
 			   &trans,
-			   (LPOVERLAPPED) &HIDOverlapped);
+			   timeout);
 	if (!result) {
 		// Windows uses zero to mean "failed"
+		if (GetLastError() == ERROR_IO_INCOMPLETE) {
+			if (timeout_ok) {
+				MSG_DEVIO("(USB operation timed out)\n");
+				return 0;
+			}
+			MSG_ERROR("USB operation timed out.\n");
+			return OMRON_ERR_DEVIO;
+		}
 		MSG_ERROR("Write failed: %d\n", GetLastError());
 		return OMRON_ERR_DEVIO;
 	}
@@ -363,7 +424,7 @@ OMRON_DECLSPEC int omron_write_data(omron_device* dev, unsigned char *report_buf
 		MSG_ERROR("Transfer size (%d) did not match expected (%d)\n", trans, dev->output_size);
 		return OMRON_ERR_DEVIO;
 	}
-	return 0;
+	return trans;
 }
 
 OMRON_DECLSPEC omron_device* omron_create_device()

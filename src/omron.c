@@ -105,6 +105,7 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 	int total_write_size = 0;
 	int current_write_size;
 	unsigned char output_report[dev->output_size];
+	int status;
 
 	//FIXME: make this print a human-readable output for the "clear" cmd
 	MSG_INFO("Sending %c%c%c command...\n", buf[0], buf[1], buf[2]);
@@ -119,10 +120,8 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 		memcpy(output_report + 1, buf+total_write_size,
 		       current_write_size);
 
-		if (omron_write_data(dev, output_report, sizeof(output_report))) {
-			MSG_ERROR("write failed\n");
-			return OMRON_ERR_DEVIO;
-		}
+		status = omron_write_data(dev, output_report, sizeof(output_report), 1000);
+		if (status < 0) return status;
 		total_write_size += current_write_size;
 	}
 
@@ -142,6 +141,31 @@ int omron_check_success(unsigned char *input_report)
 	return OMRON_ERR_BADDATA;
 }
 
+/* Read and discard any queued-up input so we're (hopefully) in sync with the
+ * device on the other end again.
+ */
+static int omron_flush(omron_device *dev) {
+	int status;
+	unsigned char input_report[dev->input_size];
+	int flushed = 0;
+
+	MSG_DETAIL("Flushing any extra input...\n");
+	while (1) {
+		/* We use a shorter-than-usual timeout (0.1s) because we know we're going to hit it eventually (so we want to keep it short) and we're only really concerned about queued input (which should be immediately retrievable) */
+		/* Note: The negative value for 'timeout' means it's "expected" and should not generate an error (just a 0 result) */
+		status = omron_read_data(dev, input_report, sizeof(input_report), -100);
+		if (status < 0) return status;
+		if (status == 0) {
+			/* Timeout (this is expected sooner or later) */
+			break;
+		}
+		flushed += status;
+		MSG_DETAIL("Discarding %d bytes of extra data...\n", status);
+	};
+	MSG_DETAIL("Flush complete.\n");
+	return flushed;
+}
+
 int omron_send_clear(omron_device* dev)
 {
 	//static const unsigned char zero[23]; /* = all zeroes */
@@ -150,14 +174,13 @@ int omron_send_clear(omron_device* dev)
 	unsigned char input_report[dev->input_size];
 	int status;
 
-	MSG_INFO("Sending clear command...\n")
-	// We don't really care whether the following call succeeds or not
-	status = omron_read_data(dev, input_report, sizeof(input_report));
-	MSG_DETAIL("Initial read result: %d (ignored)\n", status);
+	MSG_INFO("Sending clear...\n")
 	do {
+		status = omron_flush(dev);
+		if (status < 0) return status;
 		status = omron_send_command(dev, sizeof(zero), zero);
 		if (status < 0) return status;
-		status = omron_read_data(dev, input_report, sizeof(input_report));
+		status = omron_read_data(dev, input_report, sizeof(input_report), 1000);
 		if (status < 0) return status;
 	} while (omron_check_success(input_report + 1) != 0);
 
@@ -197,12 +220,9 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 	const int max_data_chunk = sizeof(input_report) - 1;
 
 	do {
-		read_result = omron_read_data(dev, input_report, sizeof(input_report));
-		if (read_result < 0) {
-			return read_result;
-		} else {
-			MSG_DETAIL("read result=%d\n", read_result);
-		}
+		read_result = omron_read_data(dev, input_report, sizeof(input_report), 1000);
+		if (read_result < 0) return read_result;
+		MSG_DETAIL("read result=%d\n", read_result);
 
 		current_read_size = input_report[0];
 		if (current_read_size < 0) {
@@ -295,32 +315,38 @@ static int omron_exchange_cmd(omron_device *dev,
 			       unsigned char *response)
 {
 	int status;
-	int read_size;
-	struct timeval timeout;
 	
-	// Retry command if the response is garbled, but accept "NO" as
-	// a valid response.
-	while (1) {
-		status = omron_check_mode(dev, mode);
-		if (status < 0) return status;
-		status = omron_send_command(dev, cmd_len, cmd);
-		if (status < 0) return status;
-		read_size = omron_get_command_return(dev, response_len, response);
-		if (read_size == OMRON_ERR_BADDATA) {
-			// We'll just loop through and try again...
-			//FIXME: need to add some logic to prevent infinite looping
-		} else {
-			break;
-		}
-		// Adding a short wait to see if it helps the bad data
-		// give it 0.15 seconds to recover
-		MSG_INFO("Sleeping for retry...\n");
-		timeout.tv_sec = 0;
-		timeout.tv_usec = 200000;
-		select(0, NULL, NULL, NULL, &timeout);
-	};
+	status = omron_check_mode(dev, mode);
+	if (status < 0) return status;
 
-	return read_size;
+	status = omron_send_command(dev, cmd_len, cmd);
+	if (status < 0) return status;
+	status = omron_get_command_return(dev, response_len, response);
+	if (status != OMRON_ERR_BADDATA) return status;
+
+	// Got a garbled response.  Do a flush and try again.
+	MSG_WARN("Bad response from device.  Retrying...\n");
+	status = omron_flush(dev);
+	if (status < 0) return status;
+	status = omron_send_command(dev, cmd_len, cmd);
+	if (status < 0) return status;
+	status = omron_get_command_return(dev, response_len, response);
+	if (status != OMRON_ERR_BADDATA) return status;
+
+	// Hmm.. still garbled.  Try doing a full clear/resync and try again.
+	MSG_WARN("Bad response from device.  Resyncing and retrying...\n");
+	status = omron_set_mode(dev, mode);
+	if (status < 0) return status;
+	status = omron_send_clear(dev);
+	if (status < 0) return status;
+	status = omron_send_command(dev, cmd_len, cmd);
+	if (status < 0) return status;
+	status = omron_get_command_return(dev, response_len, response);
+	if (status != OMRON_ERR_BADDATA) return status;
+
+	// Ok, we still can't get a valid response.  Time to just give up.
+	MSG_ERROR("Unable to get a valid response from device.\n");
+	return status;
 }
 
 static int
