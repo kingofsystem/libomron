@@ -8,7 +8,7 @@ devfile = device.device()
 print 'Using', devfile, omron.VID, omron.PID
 
 dev = omron.create_device()
-print dev, dev.device._is_inited
+print dev
 ret = omron.get_count(dev, omron.VID, omron.PID)
 print ret
 if not ret:
