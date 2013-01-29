@@ -19,6 +19,32 @@
 #include <stdlib.h>
 #include <math.h>
 
+// NOTE: The following list must be kept consistent with the error constants
+//       defined in omron.h!
+static const char *err_msgs[] = {
+	"No error (rc >= 0)",				// [noerr] (0)
+	"USB communication error",			// DEVIO   (-1)
+	"Bad argument",					// BADARG  (-2)
+	"Device not open",				// NOTOPEN (-3)
+	"Supplied buffer is the wrong size",		// BUFSIZE (-4)
+	"Bad or unrecognized command",			// NEGRESP (-5)
+	"Device returned bad data",			// BADDATA (-6)
+	"Unknown error",				// <= -7
+};
+
+OMRON_DECLSPEC const char *omron_strerror(int code) {
+	const int num_err_msgs = sizeof(err_msgs) / sizeof(err_msgs[0]);
+
+	if (code >= 0) {
+		return err_msgs[0];
+	}
+	code = -code;
+	if (code >= num_err_msgs) {
+		code = num_err_msgs - 1;
+	}
+	return err_msgs[code];
+}
+
 int _omron_debug_level = -1; // This will get set initially from omron_create()
 
 OMRON_DECLSPEC void omron_set_debug_level(int level) {

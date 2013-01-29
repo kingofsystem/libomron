@@ -35,30 +35,29 @@ int main(int argc, char** argv)
 
 	ret = omron_get_count(test, OMRON_VID, OMRON_PID);
 
-	if(!ret)
-	{
+	if (ret < 0) {
+		fprintf(stderr, "Cannot scan devices: %s\n", omron_strerror(ret));
+		return 1;
+	}
+	if (!ret) {
 		printf("No omron 720ITs connected!\n");
 		return 1;
 	}
 	//printf("Found %d omron 720ITs\n", ret);
 
 	ret = omron_open(test, OMRON_VID, OMRON_PID, 0);
-	if(ret < 0)
-	{
-		printf("Cannot open omron 720IT!\n");
+	if (ret < 0) {
+		fprintf(stderr, "Cannot open omron 720IT: %s\n", omron_strerror(ret));
 		return 1;
 	}
 	//printf("Opened omron 720IT\n");
 
 	
 	ret = omron_get_device_version(test, str, sizeof(str));
-	if(ret < 0)
-	{
-		printf("Cannot get device version!\n");
-	}
-	else
-	{
-		//printf("Device serial: %s\n", str);
+	if (ret < 0) {
+		fprintf(stderr, "Cannot get device version: %s\n", omron_strerror(ret));
+	} else {
+		//printf("Device version: %s\n", str);
 	}
 	
 		
@@ -109,9 +108,8 @@ int main(int argc, char** argv)
 		ret = omron_clear_pd_memory(test);
 	}
 	ret = omron_close(test);
-	if(ret < 0)
-	{
-		printf("Cannot close omron 720IT!\n");
+	if (ret < 0) {
+		fprintf(stderr, "Cannot close omron 720IT: %s\n", omron_strerror(ret));
 		return 1;
 	}
 

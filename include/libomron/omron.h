@@ -479,7 +479,7 @@ extern "C" {
 
 	////////////////////////////////////////////////////////////////////////////////////
 	//
-	// Debugging
+	// Debugging / Errors
 	//
 	////////////////////////////////////////////////////////////////////////////////////
 
@@ -489,6 +489,16 @@ extern "C" {
 	 * @param level Debug level
 	 */
 	OMRON_DECLSPEC void omron_set_debug_level(int level);
+
+	/**
+	 * Return an error message for a given error code (similar to
+	 * strerror() but for errors returned by libomron)
+	 *
+	 * @param code Error code
+	 *
+	 * @return Error message
+	 */
+	OMRON_DECLSPEC const char *omron_strerror(int code);
 
 #ifdef __cplusplus
 }

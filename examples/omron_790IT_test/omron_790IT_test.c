@@ -18,46 +18,41 @@ int main(int argc, char** argv)
 	
 	ret = omron_get_count(test, OMRON_VID, OMRON_PID);
 
-	if(!ret)
-	{
+	if (ret < 0) {
+		printf("Cannot scan for devices: %s\n", omron_strerror(ret));
+		return 1;
+	}
+	if (!ret) {
 		printf("No omron 790ITs connected!\n");
 		return 1;
 	}
 	printf("Found %d omron 790ITs\n", ret);
 
 	ret = omron_open(test, OMRON_VID, OMRON_PID, 0);
-	if(ret < 0)
-	{
-		printf("Cannot open omron 790IT!\n");
+	if (ret < 0) {
+		printf("Cannot open omron 790IT: %s\n", omron_strerror(ret));
 		return 1;
 	}
 	printf("Opened omron 790IT\n");
 
 	ret = omron_get_device_version(test, str, sizeof(str));
-	if(ret < 0)
-	{
-		printf("Cannot get device version!\n");
-	}
-	else
-	{
+	if (ret < 0) {
+		printf("Cannot get device version: %s\n", omron_strerror(ret));
+	} else {
 		printf("Device version: %s\n", str);
 	}
 
 	ret = omron_get_bp_profile(test, str, sizeof(str));
-	if(ret < 0)
-	{
-		printf("Cannot get device prf!\n");
-	}
-	else
-	{
+	if (ret < 0) {
+		printf("Cannot get device profile: %s\n", omron_strerror(ret));
+	} else {
 		printf("Device version: %s\n", str);
 	}
 
 	data_count = omron_get_daily_data_count(test, bank);
 	printf("AJR data count: %d\n", data_count);
-	if(data_count < 0)
-	{
-		printf("Cannot get device prf!\n");
+	if (data_count < 0) {
+		printf("Cannot get data count: %s\n", omron_strerror(ret));
 	}
 
 	for(i = data_count - 1; i >= 0; --i)
@@ -87,9 +82,8 @@ int main(int argc, char** argv)
 
 
 	ret = omron_close(test);
-	if(ret < 0)
-	{
-		printf("Cannot close omron 790IT!\n");
+	if (ret < 0) {
+		printf("Cannot close omron 790IT: %s\n", omron_strerror(ret));
 		return 1;
 	}
 	return 0;
