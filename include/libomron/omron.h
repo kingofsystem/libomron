@@ -25,13 +25,15 @@
 #define OMRON_ERR_NOTOPEN (-3)
 #define OMRON_ERR_BUFSIZE (-4)
 #define OMRON_ERR_NEGRESP (-5)
-#define OMRON_ERR_BADDATA (-6)
+#define OMRON_ERR_ENDRESP (-6)
+#define OMRON_ERR_BADDATA (-7)
 
 #define OMRON_DEBUG_ERROR   1
 #define OMRON_DEBUG_WARNING 2
 #define OMRON_DEBUG_INFO    3
 #define OMRON_DEBUG_DETAIL  4
-#define OMRON_DEBUG_DEVIO   5
+#define OMRON_DEBUG_PROTO   5
+#define OMRON_DEBUG_DEVIO   6
 
 #include <stdint.h>
 

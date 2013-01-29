@@ -28,8 +28,9 @@ static const char *err_msgs[] = {
 	"Device not open",				// NOTOPEN (-3)
 	"Supplied buffer is the wrong size",		// BUFSIZE (-4)
 	"Bad or unrecognized command",			// NEGRESP (-5)
-	"Device returned bad data",			// BADDATA (-6)
-	"Unknown error",				// <= -7
+	"Unexpected END response received",		// ENDRESP (-6)
+	"Device returned bad data",			// BADDATA (-7)
+	"Unknown error",				// <= -8
 };
 
 OMRON_DECLSPEC const char *omron_strerror(int code) {
@@ -75,7 +76,7 @@ OMRON_DECLSPEC void omron_set_debug_level(int level) {
 	_omron_debug_level = new_level;
 }
 
-void omron_hexdump(uint8_t *data, int n_bytes)
+void omron_hexdump(const uint8_t *data, int n_bytes)
 {
 	while (n_bytes--) {
 		fprintf(stderr, " %02x", *(unsigned char*) data);
@@ -133,8 +134,12 @@ int omron_send_command(omron_device* dev, int size, const unsigned char* buf)
 	unsigned char output_report[dev->output_size];
 	int status;
 
-	//FIXME: make this print a human-readable output for the "clear" cmd
-	MSG_INFO("Sending %c%c%c command...\n", buf[0], buf[1], buf[2]);
+	if (buf[0] == 0) {
+		MSG_INFO("Sending clear command...\n");
+	} else {
+		MSG_INFO("Sending %c%c%c command...\n", buf[0], buf[1], buf[2]);
+	}
+	MSG_HEXDUMP(OMRON_DEBUG_PROTO, "Command: ", buf, size);
 
 	while(total_write_size < size)
 	{
@@ -192,26 +197,6 @@ static int omron_flush(omron_device *dev) {
 	return flushed;
 }
 
-int omron_send_clear(omron_device* dev)
-{
-	static const unsigned char zero[12]; /* = all zeroes */
-	unsigned char input_report[dev->input_size];
-	int status;
-
-	MSG_INFO("Sending clear...\n")
-	do {
-		status = omron_flush(dev);
-		if (status < 0) return status;
-		status = omron_send_command(dev, sizeof(zero), zero);
-		if (status < 0) return status;
-		status = omron_read_data(dev, input_report, sizeof(input_report), 1000);
-		if (status < 0) return status;
-	} while (omron_check_success(input_report + 1) != 0);
-
-	MSG_INFO("Clear successful.\n")
-	return 0;
-}
-
 static int
 xor_checksum(unsigned char *data, int len)
 {
@@ -246,7 +231,6 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 	do {
 		read_result = omron_read_data(dev, input_report, sizeof(input_report), 1000);
 		if (read_result < 0) return read_result;
-		MSG_DETAIL("read result=%d\n", read_result);
 
 		current_read_size = input_report[0];
 		if (current_read_size < 0) {
@@ -274,45 +258,73 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 		       current_read_size);
 		total_read_size += current_read_size;
 
-		if(!has_checked && total_read_size >= 2)
-		{
-			if (total_read_size == 2 &&
-			    data[0] == 'N' && data[1] == 'O') {
-				MSG_INFO("Received NO response.\n");
-				return OMRON_ERR_NEGRESP;
-			}
-
-			if (strncmp((const char*) data, "END\r\n",
-				    total_read_size) == 0) {
-				//FIXME: should we just return at this point?
-				has_checked = (total_read_size >= 5);
-			} else {
-				if (data[0] != 'O' || data[1] != 'K') {
-					MSG_ERROR("Response is not OK, NO, or END: bad data.\n");
-					return OMRON_ERR_BADDATA; /* garbled response */
-				}
-				has_checked = 1;
-			}
+		if (current_read_size < max_data_chunk) {
+			// Short chunks should only occur as the last chunk of
+			// a response.  Stop here (even if we haven't read as
+			// much as we were expecting) because trying to read
+			// further will just result in a timeout.
+			break;
 		}
-	} while ((total_read_size < size) && (current_read_size == max_data_chunk));
-	MSG_DETAIL("Completed read.  requested size=%d, read size=%d\n", total_read_size, size);
+		if (data[0] != 'O' || data[1] != 'K') {
+			// Only "OK" responses have the potential to span more
+			// than one report.  We either have a "NO", an "END",
+			// or a garbled response.  In any case, we should stop
+			// here.
+			break;
+		}
+	} while (total_read_size < size);
+	MSG_HEXDUMP(OMRON_DEBUG_PROTO, "Response: ", data, total_read_size);
 
-	if (total_read_size < 3) { //FIXME: should this be 2?
+	if (total_read_size < 2) {
 		MSG_ERROR("Response is too short: bad data.\n");
 		return OMRON_ERR_BADDATA;
 	}
-	//FIXME: check for END here?
-	if (data[0] != 'O' || data[1] != 'K') {
-		//FIXME: can we ever get here?
-		MSG_ERROR("Response is not OK, NO, or END: bad data.\n");
-		return OMRON_ERR_BADDATA;
+	if (data[0] == 'O' && data[1] == 'K') {
+		if (xor_checksum(data+2, total_read_size-2)) {
+			MSG_ERROR("Response has bad checksum: bad data.\n");
+			return OMRON_ERR_BADDATA;
+		}
+		MSG_DETAIL("Received OK response: requested=%d read=%d\n", size, total_read_size);
+		return total_read_size;
 	}
-	if (xor_checksum(data+2, total_read_size-2)) {
-		MSG_ERROR("Response has bad checksum: bad data.\n");
-		return OMRON_ERR_BADDATA;
+	if (data[0] == 'N' && data[1] == 'O') {
+		if (total_read_size != 2) {
+			MSG_WARN("'NO' response has extra data.\n");
+		}
+		MSG_DETAIL("Received NO response.\n");
+		return OMRON_ERR_NEGRESP;
 	}
-	MSG_INFO("Received OK response: size=%d\n", total_read_size);
-	return total_read_size;
+	if (!strncmp((const char*) data, "END\r\n", total_read_size)) {
+		MSG_DETAIL("Received END response.\n");
+		return OMRON_ERR_ENDRESP;
+	}
+	MSG_ERROR("Response is not OK, NO, or END: bad data.\n");
+	return OMRON_ERR_BADDATA;
+}
+
+int omron_send_clear(omron_device* dev)
+{
+	static const unsigned char zero[12]; /* = all zeroes */
+	unsigned char response[2];
+	int status;
+	int retry_count = 3;
+
+	MSG_INFO("Performing clear...\n")
+	do {
+		status = omron_flush(dev);
+		if (status < 0) break;
+		status = omron_send_command(dev, sizeof(zero), zero);
+		if (status < 0) break;
+		status = omron_get_command_return(dev, sizeof(response), response);
+		if (status != OMRON_ERR_BADDATA) break;
+	} while (retry_count--);
+
+	if (status < 0) {
+		MSG_ERROR("Clear failed: %d\n", status);
+		return status;
+	}
+	MSG_INFO("Clear successful.\n")
+	return 0;
 }
 
 int omron_check_mode(omron_device* dev, omron_mode mode)

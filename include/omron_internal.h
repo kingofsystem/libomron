@@ -39,6 +39,7 @@ extern int _omron_debug_level;
 #define MSG_WARN(...)   DPRINTF(OMRON_DEBUG_WARNING, __VA_ARGS__)
 #define MSG_INFO(...)   DPRINTF(OMRON_DEBUG_INFO, __VA_ARGS__)
 #define MSG_DETAIL(...) DPRINTF(OMRON_DEBUG_DETAIL, __VA_ARGS__)
+#define MSG_PROTO(...)  DPRINTF(OMRON_DEBUG_PROTO, __VA_ARGS__)
 #define MSG_DEVIO(...)  DPRINTF(OMRON_DEBUG_DEVIO, __VA_ARGS__)
 
 #define MSG_HEXDUMP(level, msg, data, len) \
@@ -58,6 +59,6 @@ omron_device* omron_create_device(void);
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-void omron_hexdump(uint8_t *data, int n_bytes);
+void omron_hexdump(const uint8_t *data, int n_bytes);
 
 #endif // _OMRON_INTERNAL_H
