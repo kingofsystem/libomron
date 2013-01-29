@@ -431,7 +431,6 @@ OMRON_DECLSPEC omron_device* omron_create_device()
 {
 	omron_device* s = (omron_device*)malloc(sizeof(omron_device));
 	s->device._is_open = 0;
-	s->device._is_inited = 1;	
 	return s;
 }
 

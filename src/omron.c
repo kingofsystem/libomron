@@ -168,9 +168,7 @@ static int omron_flush(omron_device *dev) {
 
 int omron_send_clear(omron_device* dev)
 {
-	//static const unsigned char zero[23]; /* = all zeroes */
 	static const unsigned char zero[12]; /* = all zeroes */
-	//unsigned char input_report[9];
 	unsigned char input_report[dev->input_size];
 	int status;
 
@@ -204,10 +202,10 @@ xor_checksum(unsigned char *data, int len)
 
 /*
   omron_get_command_return returns:
-	#of bytes
-  0 : Valid response ("OK..." or "NO").
-  1 : Garbled response
-  <0 : IO error
+  >=0 : Valid response ("OK..."). Returns # of bytes (including "OK").
+  OMRON_ERR_NEGRESP: "NO" response
+  OMRON_ERR_BADDATA: Garbled response
+  <0 : Other error
 */
 
 int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
@@ -255,7 +253,7 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 			if (total_read_size == 2 &&
 			    data[0] == 'N' && data[1] == 'O') {
 				MSG_INFO("Received NO response.\n");
-				return 0; /* "NO" is valid response */
+				return OMRON_ERR_NEGRESP;
 			}
 
 			if (strncmp((const char*) data, "END\r\n",
@@ -454,29 +452,6 @@ OMRON_DECLSPEC omron_bp_day_info omron_get_daily_bp_data(omron_device* dev, int 
 	status = omron_exchange_cmd(dev, DAILY_INFO_MODE, sizeof(command), command,
 			   sizeof(data), data);
 
-	//printf("Daily data:");
-	//hexdump(data, sizeof(data));
-	//printf("\n");
-
-        // added by bv
-	// if (data[0] == 'O' && data[1] == 'K') {
-	// 	r.year = data[3];
-	// 	r.month = data[4];
-	// 	r.day = data[5];
-	// 	r.hour = data[6];
-	// 	r.minute = data[7];
-	// 	r.second = data[8];
-	// 	r.unknown_1[0] = data[9];
-	// 	r.unknown_1[1] = data[10];
-	// 	r.sys = data[11];
-	// 	r.dia = data[12];
-	// 	r.pulse = data[13];
-	// 	r.unknown_2[0] = data[14];
-	// 	r.unknown_2[1] = data[15];
-	// 	r.unknown_2[2] = data[16];
-	// }
-	// return r;
-
 	if (status != sizeof(data)) {
 		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		//FIXME: We need a way to return an error result from this function
@@ -492,14 +467,11 @@ OMRON_DECLSPEC omron_bp_day_info omron_get_daily_bp_data(omron_device* dev, int 
 		r.hour = data[6];
 		r.minute = data[7];
 		r.second = data[8];
-		r.unknown_1[0] = data[9];
-		r.unknown_1[1] = data[10];
+		// Unknown: 9..10
 		r.sys = data[11];
 		r.dia = data[12];
 		r.pulse = data[13];
-		r.unknown_2[0] = data[14];
-		r.unknown_2[1] = data[15];
-		r.unknown_2[2] = data[16];
+		// Unknown: 14..16
 	}
 	return r;
 }
@@ -534,16 +506,16 @@ OMRON_DECLSPEC omron_bp_week_info omron_get_weekly_bp_data(omron_device* dev, in
 		r.present = 0;
 	} else {
 		r.present = 1;
-		/* printf("Weekly data:"); */
-		/* hexdump(data, sizeof(data)); */
-		/* printf("\n"); */
 
+		// Unknown: 3 (always 0x00)
+		// Unknown: 4 (always 0x80)
 		r.year = data[5];
 		r.month = data[6];
 		r.day = data[7];
 		r.sys = data[8] + 25;
 		r.dia = data[9];
 		r.pulse = data[10];
+		// Unknown: 11
 	}
 	return r;
 }
@@ -556,8 +528,11 @@ OMRON_DECLSPEC omron_pd_profile_info omron_get_pd_profile(omron_device* dev)
 
 	status = omron_dev_info_command(dev, "PRF00", data, sizeof(data));
 	if (status == sizeof(data)) {
+		// Unknown: 0..1
 		profile_info.weight = bcd_to_int(data, 2, 4) / 10;
+		// Unknown: 4..5
 		profile_info.stride = bcd_to_int(data, 6, 4) / 10;
+		// Unknown: 8..10
 	} else {
 		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		//FIXME: We need a way to return an error result from this function
@@ -585,8 +560,11 @@ OMRON_DECLSPEC omron_pd_count_info omron_get_pd_data_count(omron_device* dev)
 
 	status = omron_dev_info_command(dev, "CNT00", data, sizeof(data));
 	if (status == sizeof(data)) {
+		// Unknown: 0
 		count_info.daily_count = data[1];
+		// Unknown: 2
 		count_info.hourly_count = data[3];
+		// Unknown: 4
 	} else {
 		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));
 		//FIXME: We need a way to return an error result from this function
@@ -612,6 +590,7 @@ OMRON_DECLSPEC omron_pd_daily_data omron_get_pd_daily_data(omron_device* dev, in
 		daily_data.total_calories = bcd_to_int2(data, 20, 5);
 		daily_data.total_distance = bcd_to_int2(data, 25, 5) / 100.0;
 		daily_data.total_fat_burn = bcd_to_int2(data, 30, 4) / 10.0;
+		// Unknown: 17..19
 		daily_data.day_serial = day;
 	} else {
 		MSG_ERROR("Returned data size (%d) does not match expected size (%lu)!\n", status, sizeof(data));

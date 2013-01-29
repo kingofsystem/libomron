@@ -28,13 +28,12 @@ omron_device* omron_create_device()
 	int status;
 	omron_device* s = (omron_device*)malloc(sizeof(omron_device));
 	s->device._is_open = 0;
-	s->device._is_inited = 0;
 	status = libusb_init(&s->device._context);
 	if (status < 0) {
 		MSG_ERROR("libusb_init returned %d\n", status);
+		free(s);
 		return NULL;
 	}
-	s->device._is_inited = 1;	
 	return s;
 }
 
@@ -46,11 +45,6 @@ int omron_get_count(omron_device* s, int device_vid, int device_pid)
 	int count = 0;
 	int status;
 
-	if (!s->device._is_inited)
-	{
-		return OMRON_ERR_NOTINIT;
-	}
-	
 	status = libusb_get_device_list(s->device._context, &devs);
 	if (status < 0)
 	{
@@ -86,11 +80,6 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 	int count = 0;
 	int status;
 
-	if (!s->device._is_inited)
-	{
-		return OMRON_ERR_NOTINIT;
-	}
-
 	status = libusb_get_device_list(s->device._context, &devs);
 	if (status < 0) {
 		MSG_ERROR("libusb_get_device_list returned %d\n", status);
@@ -105,7 +94,7 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 		{
 			MSG_ERROR("libusb_get_device_descriptor returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
 			libusb_free_device_list(devs, 1);
-			return OMRON_ERR_NOTINIT;
+			return OMRON_ERR_DEVIO;
 		}
 		if (desc.idVendor == device_vid && desc.idProduct == device_pid)
 		{
@@ -126,13 +115,13 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 		{
 			MSG_ERROR("libusb_open returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
 			libusb_free_device_list(devs, 1);
-			return OMRON_ERR_NOTINIT;
+			return OMRON_ERR_DEVIO;
 		}
 	}
 	else
 	{
 		MSG_ERROR("Could not find requested device (%d) to open\n", device_index);
-		return OMRON_ERR_NOTINIT;
+		return OMRON_ERR_BADARG;
 	}
 	MSG_DEVIO("Opened device %d (USB device %02x:%02x)\n", device_index, libusb_get_bus_number(dev), libusb_get_device_address(dev));
 	s->input_size = INPUT_REPORT_SIZE;
@@ -168,7 +157,7 @@ int omron_close(omron_device* s)
 	{
 		libusb_device *dev = libusb_get_device(s->device._device);
 		MSG_ERROR("libusb_release_interface returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
-		return OMRON_ERR_NOTINIT;
+		return OMRON_ERR_DEVIO;
 	}
 	libusb_close(s->device._device);
 	s->device._is_open = 0;

@@ -21,7 +21,7 @@
  ******************************************************************************/
 
 #define OMRON_ERR_DEVIO   (-1)
-#define OMRON_ERR_NOTINIT (-2)
+#define OMRON_ERR_BADARG  (-2)
 #define OMRON_ERR_NOTOPEN (-3)
 #define OMRON_ERR_BUFSIZE (-4)
 #define OMRON_ERR_NEGRESP (-5)
@@ -55,8 +55,6 @@ typedef struct {
 	HANDLE _dev;
 	/// 0 if device is closed, > 0 otherwise
 	int _is_open;
-	/// 0 if device is initialized, > 0 otherwise
-	int _is_inited;
 } omron_device_impl;
 #else
 #define OMRON_DECLSPEC
@@ -64,10 +62,7 @@ typedef struct {
 typedef struct {
 	struct libusb_context* _context;
 	struct libusb_device_handle* _device;
-	struct libusb_transfer* _in_transfer;
-	struct libusb_transfer* _out_transfer;
 	int _is_open;
-	int _is_inited;
 } omron_device_impl;
 #endif
 
@@ -133,21 +128,6 @@ typedef struct
 	omron_mode device_mode;
 } omron_device;
 
-/**
- * Enumeration of device information
- *
- * Stores information about the device version, serial, etc...
- */
-typedef struct
-{
-	/// Version of the device
-	uint8_t version[13];
-	/// Can't remember what this is
-	uint8_t prf[11];
-	/// Serial number of the device
-	uint8_t srl[8];
-} omron_device_info;
-
 /*******************************************************************************
  *
  * Blood pressure monitor specific enumerations
@@ -175,16 +155,12 @@ typedef struct
 	uint32_t minute;
 	/// Second of reading
 	uint32_t second;
-	/// No idea
-	uint8_t unknown_1[2];
 	/// SYS reading
 	uint32_t sys;
 	/// DIA reading
 	uint32_t dia;
 	/// Pulse reading
 	uint32_t pulse;
-	/// No idea
-	uint8_t unknown_2[3];
 	/// 1 if week block is filled, 0 otherwise
 	uint8_t present;
 } omron_bp_day_info;
@@ -196,18 +172,12 @@ typedef struct
  */
 typedef struct
 {
-	/// always 0x00
-	uint8_t unknown_1;
-	/// always 0x80
-	uint8_t unknown_2;
 	/// Year of reading
 	uint32_t year;
 	/// Month of reading
 	uint32_t month;
 	/// Day that weekly average starts on
 	uint32_t day;
-	/// always 0
-	uint8_t unknown_3;
 	/// SYS average for week
 	int32_t sys;
 	/// DIA average for week
@@ -232,14 +202,10 @@ typedef struct
  */
 typedef struct
 {
-	/// ???
-	uint8_t unknown_1[2];
-	/// lbs times 10? i.e. 190 = {0x01, 0x90} off the device
+	/// lbs times 10? i.e. 195 = {0x19, 0x50} off the device
 	uint32_t weight;
 	/// kg times 10? same as last
 	uint32_t stride;
-	/// ???
-	uint8_t unknown_2[2];
 } omron_pd_profile_info;
 
 /**
@@ -254,8 +220,6 @@ typedef struct
 	int32_t daily_count;
 	/// Number of valid hourly packets
 	int32_t hourly_count;
-	/// No idea.
-	uint8_t unknown_1;
 } omron_pd_count_info;
 
 /**
@@ -280,8 +244,6 @@ typedef struct
 	float total_fat_burn;
 	/// Offset of date from current day
 	int32_t day_serial;
-	/// No idea
-	uint8_t unknown_1;
 } omron_pd_daily_data;
 
 /**
