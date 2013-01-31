@@ -81,7 +81,7 @@ extern const uint32_t OMRON_PID;
 
 /*******************************************************************************
  *
- * Omron device enumerations
+ * Omron device structures
  *
  ******************************************************************************/
 
@@ -109,7 +109,7 @@ typedef enum
 } omron_mode;
 
 /**
- * Enumeration of device state
+ * Structure for device state
  *
  * Keeps the state of the device, and the current mode that it's in. If
  * we issue a command that needs a different mode, we can use the state
@@ -127,12 +127,12 @@ typedef struct
 
 /*******************************************************************************
  *
- * Blood pressure monitor specific enumerations
+ * Blood pressure monitor specific structures
  *
  ******************************************************************************/
 
 /**
- * Enumeration for daily blood pressure info
+ * Structure for daily blood pressure info
  *
  * Stores information taken on a daily basis for blood pressure
  * Usually, we consider there to be one morning and one evening
@@ -163,7 +163,7 @@ typedef struct
 } omron_bp_day_info;
 
 /**
- * Enumeration for weekly blood pressure info
+ * Structure for weekly blood pressure info
  *
  * Stores information averages for a week
  */
@@ -188,12 +188,12 @@ typedef struct
 
 /*******************************************************************************
  *
- * Pedometer specific enumerations
+ * Pedometer specific structures
  *
  ******************************************************************************/
 
 /**
- * Enumeration for pedometer profile information
+ * Structure for pedometer profile information
  *
  * Stores information about user (weight, stride length, etc...)
  */
@@ -201,12 +201,12 @@ typedef struct
 {
 	/// lbs times 10? i.e. 195 = {0x19, 0x50} off the device
 	uint32_t weight;
-	/// kg times 10? same as last
+	/// inches times 10? same as last
 	uint32_t stride;
 } omron_pd_profile_info;
 
 /**
- * Enumeration for count of valid pedometer information packets
+ * Structure for count of valid pedometer information packets
  *
  * Contains the number of valid daily and hourly packets, for use by
  * programs for reading information off the device
@@ -220,7 +220,7 @@ typedef struct
 } omron_pd_count_info;
 
 /**
- * Enumeration for daily data packets from pedometer
+ * Structure for daily data packets from pedometer
  *
  * Daily information from pedometer, including steps, distance, etc...
  *
@@ -231,20 +231,20 @@ typedef struct
 	int32_t total_steps;
 	/// Total number of "aerobic" steps for the day
 	int32_t total_aerobic_steps;
-	/// Total time spent "aerobically" walking throughout the day (in minutes)
+	/// Total time spent "aerobically" walking throughout the day [minutes]
 	int32_t total_aerobic_walking_time;
-	/// Total calories burned kcal
+	/// Total calories burned [kcal]
 	int32_t total_calories;
-	/// Total distance (steps * stride) miles
+	/// Total distance (steps * stride) [miles]
 	float total_distance;
-	/// Total fat burned grams
+	/// Total fat burned [grams]
 	float total_fat_burn;
 	/// Offset of date from current day
 	int32_t day_serial;
 } omron_pd_daily_data;
 
 /**
- * Enumeration for hourly data packets from pedometer
+ * Structure for hourly data packets from pedometer
  *
  * Hourly information about steps taken during a certain day
  */
@@ -276,15 +276,17 @@ extern "C" {
 	////////////////////////////////////////////////////////////////////////////////////
 	
 	/**
-	 * Returns the number of devices connected, though does not specify device type
+	 * Create a new device structure to work with
 	 *
-	 * @param dev Device pointer
-	 * @param VID Vendor ID, defaults to 0x0590
-	 * @param PID Product ID, defaults to 0x0028
-	 *
-	 * @return Number of devices connected, or < 0 if error
+	 * @return Pointer to omron_device structure, or NULL on error
 	 */
 	OMRON_DECLSPEC omron_device* omron_create();
+
+	/**
+	 * Delete and free a device structure created by omron_create()
+	 *
+	 * @param dev Device pointer
+	 */
 	OMRON_DECLSPEC void omron_delete(omron_device* dev);
 
 	/**
@@ -294,27 +296,28 @@ extern "C" {
 	 * @param VID Vendor ID, defaults to 0x0590
 	 * @param PID Product ID, defaults to 0x0028
 	 *
-	 * @return Number of devices connected, or < 0 if error
+	 * @return Number of devices connected, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_get_count(omron_device* dev, int VID, int PID);
 
 	/**
-	 * Returns the number of devices connected, though does not specify device type
+	 * Open a particular device for communication
 	 *
 	 * @param dev Device pointer
-	 * @param device_index Index of the device to open
 	 * @param VID Vendor ID, defaults to 0x0590
 	 * @param PID Product ID, defaults to 0x0028
+	 * @param device_index Index of the device to open
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return 0 on success, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_open(omron_device* dev, int VID, int PID, uint32_t device_index);
+
 	/**
 	 * Closes an open omron device
 	 *
 	 * @param dev Device pointer to close
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return 0 on success, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_close(omron_device* dev);
 
@@ -324,7 +327,7 @@ extern "C" {
 	 * @param dev Device pointer to set mode for
 	 * @param mode Mode enumeration value, from omron_mode enum
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return 0 on success, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_set_mode(omron_device* dev, omron_mode mode);
 
@@ -332,9 +335,11 @@ extern "C" {
 	 * Reads data from the device
 	 *
 	 * @param dev Device pointer to read from
-	 * @param input_report Buffer to read into (always 8 bytes)
+	 * @param report_buf Buffer to read into (should be >= 8 bytes)
+	 * @param report_size Size of report_buf (in bytes)
+	 * @param timeout Timeout for read operation (in ms)
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return Number of bytes read, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_read_data(omron_device* dev, uint8_t *report_buf, int report_size, int timeout);
 
@@ -342,9 +347,11 @@ extern "C" {
 	 * Writes data to the device
 	 *
 	 * @param dev Device pointer to write to
-	 * @param input_report Buffer to read from (always 8 bytes)
+	 * @param report_buf Buffer to write data from (should be <= 8 bytes)
+	 * @param report_size Size of report_buf (in bytes)
+	 * @param timeout Timeout for write operation (in ms)
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return Number of bytes written, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_write_data(omron_device* dev, uint8_t *report_buf, int report_size, int timeout);
 
@@ -355,22 +362,25 @@ extern "C" {
 	////////////////////////////////////////////////////////////////////////////////////
 
 	/**
-	 * Retrieves the serial number of the device
+	 * Retrieves the serial number of the device.
+	 * Returns the result as a zero-terminated string.
 	 *
 	 * @param dev Device to get serial number from
-	 * @param data 8 byte buffer to read serial number into
+	 * @param data buffer to read serial number into (must be >= 8 bytes)
+	 * @param data_size Size of data buffer (in bytes)
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return Number of bytes read, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_get_device_serial(omron_device* dev, uint8_t* data, int data_size);
 
 	/**
-	 * Retrieves the version number of the device
+	 * Retrieves the model and version of the device.
+	 * Returns the result as a zero-terminated string.
 	 *
-	 * @param dev Device to get version number from
-	 * @param data 8 byte buffer to read version number into
+	 * @param data buffer to read version into (must be >= 12 bytes)
+	 * @param data_size Size of data buffer (in bytes)
 	 *
-	 * @return > 0 if ok, otherwise < 0
+	 * @return Number of bytes read, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_get_device_version(omron_device* dev, uint8_t* data, int data_size);
 
@@ -381,44 +391,46 @@ extern "C" {
 	////////////////////////////////////////////////////////////////////////////////////
 
 	/**
-	 * Get profile information for pedometer
+	 * Get profile information for BP monitor.
+	 * Returns the result as a zero-terminated string.
 	 *
-	 * @param dev Device to query
-	 * @param data 11 byte buffer for profile information
+	 * @param data buffer to read profile into (must be >= 11 bytes)
+	 * @param data_size Size of data buffer (in bytes)
 	 *
-	 * @return 0 if successful, < 0 otherwise
+	 * @return Number of bytes read, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_get_bp_profile(omron_device* dev, uint8_t* data, int data_size);
 
 	/**
-	 * Query device for number of valid daily data packets
+	 * Get the number of valid daily data packets available.
 	 *
 	 * @param dev Device to query
+	 * @param bank Memory bank to query (A=0, B=1)
 	 *
-	 * @return Number of available data packets
+	 * @return Number of available data packets, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_get_daily_data_count(omron_device* dev, unsigned char bank);
 
 	/**
-	 * Gets a specific data index from a specific bank of readings
+	 * Get daily BP info for a particular bank/day
 	 *
 	 * @param dev Device to query
-	 * @param bank Bank to query (A or B switch on device)
-	 * @param index Index of packet to query in bank
+	 * @param bank Memory bank to query (A=0, B=1)
+	 * @param index Index of day to query in bank
 	 *
-	 * @return Data packet with requested information
+	 * @return omron_bp_day_info structure with requested information
 	 */
 	OMRON_DECLSPEC omron_bp_day_info omron_get_daily_bp_data(omron_device* dev, int bank, int index);
 
 	/**
-	 * Gets a specfic data index from a specific bank of readings
+	 * Get weekly BP morning or evening info for a particular bank/week
 	 *
 	 * @param dev Device to query
-	 * @param bank Bank to query (A or B switch on device)
-	 * @param index Index of packet to query in bank
+	 * @param bank Memory bank to query (A=0, B=1)
+	 * @param index Index of week to query in bank
 	 * @param evening If 0, get morning average, If 1, get evening average.
 	 *
-	 * @return Data packet with requested information
+	 * @return omron_bp_week_info structure with requested information
 	 */
 	OMRON_DECLSPEC omron_bp_week_info omron_get_weekly_bp_data(omron_device* dev, int bank, int index, int evening);
 
@@ -433,7 +445,7 @@ extern "C" {
 	 *
 	 * @param dev Device to query
 	 *
-	 * @return Struct with weight and stride info
+	 * @return omron_pd_profile structure with weight and stride info
 	 */
 	OMRON_DECLSPEC omron_pd_profile_info omron_get_pd_profile(omron_device* dev);
 
@@ -442,35 +454,36 @@ extern "C" {
 	 *
 	 * @param dev Device to query
 	 *
-	 * @return Struct with count information
+	 * @return omron_pd_count_info structure with count information
 	 */
 	OMRON_DECLSPEC omron_pd_count_info omron_get_pd_data_count(omron_device* dev);
 
 	/**
-	 * Get data for a specific day index
+	 * Get daily pedometer averages for a specific day
 	 *
 	 * @param dev Device to query
-	 * @param day Day index, should be between 0 and info retrieved from omron_get_pd_data_count
+	 * @param day Day index (should be between 0 and info retrieved from omron_get_pd_data_count)
 	 *
-	 * @return Struct with data for day
+	 * @return omron_pd_daily_data structure
 	 */
 	OMRON_DECLSPEC omron_pd_daily_data omron_get_pd_daily_data(omron_device* dev, int day);
 
 	/**
-	 * Get hourly data for a specific day index
+	 * Get hourly pedometer data for a specific day
 	 *
 	 * @param dev Device to query
-	 * @param day Day index, should be between 0 and info retrieved from omron_get_pd_data_count
+	 * @param day Day index (should be between 0 and info retrieved from omron_get_pd_data_count)
 	 *
-	 * @return Struct with hourly info for day
+	 * @return malloc()d array of 24 omron_pd_hourly_data structures, or NULL on error
 	 */
 	OMRON_DECLSPEC omron_pd_hourly_data* omron_get_pd_hourly_data(omron_device* dev, int day);
+
 	/**
-	 * Clear the flash memory one the device
+	 * Clear all readings from the pedometer device
 	 *
-	 * @param dev Device to query
+	 * @param dev Device to clear
 	 *
-	 * @return 0 on success
+	 * @return 0 on success, or < 0 on error
 	 */
 	OMRON_DECLSPEC int omron_clear_pd_memory(omron_device* dev);
 
@@ -483,7 +496,7 @@ extern "C" {
 	/**
 	 * Set the debugging level
 	 *
-	 * @param level Debug level
+	 * @param level Debug level (one of the OMRON_DEBUG_* constants)
 	 */
 	OMRON_DECLSPEC void omron_set_debug_level(int level);
 
@@ -493,7 +506,7 @@ extern "C" {
 	 *
 	 * @param code Error code
 	 *
-	 * @return Error message
+	 * @return Error message string
 	 */
 	OMRON_DECLSPEC const char *omron_strerror(int code);
 
