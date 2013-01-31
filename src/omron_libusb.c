@@ -20,11 +20,6 @@
 #define OMRON_OUT_ENDPT 0x02
 #define OMRON_IN_ENDPT  0x81
 
-// FIXME: The following should really be parsed from the HID descriptor instead
-//        of being defined as macros..
-#define INPUT_REPORT_SIZE 8
-#define OUTPUT_REPORT_SIZE 8
-
 omron_device* omron_create_device()
 {
 	int status;
@@ -127,9 +122,15 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 		return OMRON_ERR_BADARG;
 	}
 	MSG_DEVIO("Opened device %d (USB device %02x:%02x)\n", device_index, libusb_get_bus_number(dev), libusb_get_device_address(dev));
-	s->input_size = INPUT_REPORT_SIZE;
-	s->output_size = OUTPUT_REPORT_SIZE;
+	s->input_size = libusb_get_max_packet_size(dev, OMRON_IN_ENDPT);
+	s->output_size = libusb_get_max_packet_size(dev, OMRON_OUT_ENDPT);
 	s->device._is_open = 1;
+	MSG_DEVIO("input max packet size: %d\n", s->input_size);
+	MSG_DEVIO("output max packet size: %d\n", s->output_size);
+	if ((s->input_size < 2) || (s->output_size < 2)) {
+		MSG_ERROR("libusb_get_max_packet_size returned an invalid value\n");
+		return OMRON_ERR_DEVIO;
+	}
 
 	if(libusb_kernel_driver_active(s->device._device, OMRON_INTERFACE))
 	{
