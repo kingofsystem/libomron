@@ -113,15 +113,16 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 	{
 		dev = found;
 		status = libusb_open(found, &s->device._device);
+		libusb_free_device_list(devs, 1);
 		if (status < 0)
 		{
 			MSG_ERROR("libusb_open returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
-			libusb_free_device_list(devs, 1);
 			return OMRON_ERR_DEVIO;
 		}
 	}
 	else
 	{
+		libusb_free_device_list(devs, 1);
 		MSG_ERROR("Could not find requested device (%d) to open\n", device_index);
 		return OMRON_ERR_BADARG;
 	}
@@ -140,9 +141,10 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 	status = libusb_claim_interface(s->device._device, OMRON_INTERFACE);
 	if (status < 0) {
 		MSG_ERROR("libusb_claim_interface returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
+		return OMRON_ERR_DEVIO;
 	}
 
-	return status;
+	return 0;
 }
 
 int omron_close(omron_device* s)
