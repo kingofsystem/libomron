@@ -1,0 +1,305 @@
+#!/usr/bin/python
+#
+# usage: process_usblogs [-h] (--snoopyxml | --usblyzer)
+#
+# Process USB logs in various formats to a common text output for analysis
+#
+# optional arguments:
+#   -h, --help   show this help message and exit
+#
+# Input Type (must specify one):
+#   --snoopyxml  XML log produced by SnoopyPro
+#   --usblyzer   HTML output produced by USBlyzer
+#
+# Note: All input is read from stdin and output is written to stdout.
+
+import sys
+import argparse
+from xml.etree.ElementTree import XMLParser, TreeBuilder
+from HTMLParser import HTMLParser
+
+def read_xml(infile):
+    """
+    Read an input XML file, skipping any leading text.
+    Returns the root element.
+    """
+    parser = XMLParser(target=TreeBuilder())
+    parsing = False
+    for line in infile.xreadlines():
+        if not parsing and '<' in line:
+            parsing = True
+            line = line[line.index('<'):]
+        if parsing:
+            parser.feed(line)
+    return parser.close()
+
+
+class TableParser (HTMLParser):
+    """
+    A simple HTML parser that will extract the text contents of a table
+
+    Note: This parser is very simplistic.  It assumes there's only one table
+	  per input, and only extracts the text (no HTML tags) within the
+          cells.
+    """
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.table_headers = []
+        self.table_data = []
+        self._current_row = []
+        self._current_is_header = False
+        self._collecting = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'table':
+            self.start_table()
+        elif tag == 'tr':
+            self.start_row()
+        elif tag == 'td':
+            self.start_cell()
+        elif tag == 'th':
+            self.start_cell(True)
+
+    def handle_endtag(self, tag):
+        if tag == 'table':
+            self.end_table()
+        elif tag == 'tr':
+            self.end_row()
+        elif tag in ('td', 'th'):
+            self.end_cell()
+
+    def handle_data(self, data):
+        if self._collecting:
+            self._current_row[-1] = self._current_row[-1] + data
+
+    def start_table(self):
+        pass
+
+    def end_table(self):
+        if self._current_row:
+            self.end_row()
+
+    def start_row(self):
+        if self._current_row:
+            self.end_row()
+        self._current_row = []
+        self._current_is_header = False
+
+    def end_row(self):
+        if self._current_is_header:
+            self.table_header = self._current_row
+        else:
+            self.table_data.append(self._current_row)
+        self._current_row = []
+        self._current_is_header = False
+
+    def start_cell(self, header=False):
+        self._collecting = True
+        self._current_is_header = header
+        self._current_row.append('')
+
+    def end_cell(self):
+        self._collecting = False
+
+
+class USBRequest:
+    """
+    Generic class holding the details of a parsed USB request.
+    Note: This class must be subclassed and a .parse_data() function must be
+    defined to parse the appropriate type of input and fill in appropriate
+    fields.
+    """
+
+    reqtype_map = {
+      'GET_DESCRIPTOR_FROM_DEVICE':    'devdescr',
+      'GET_DESCRIPTOR_FROM_INTERFACE': 'intdescr',
+      'CONTROL_TRANSFER':              'ctrlxfer',
+      'SELECT_CONFIGURATION':          'selconf',
+      'CLASS_INTERFACE':               'classint',
+      'BULK_OR_INTERRUPT_TRANSFER':    'transfer',
+    }
+
+    def __init__(self, data):
+        self.seq = None
+        self.timestamp = None
+        self.start_timestamp = None
+        self.end_timestamp = None
+        self.function = None
+        self.endpoint = None
+        self.direction = '?'
+        self.data = []
+        self.completed = False
+        self.result = None
+        self.parse_data(data)
+        self.normalize()
+
+    def update_completion(self, req):
+        "Update this request with information from a matching completion event"
+        self.end_timestamp = req.timestamp
+        self.completed = True
+        if not self.data:
+            self.seq = req.seq
+            self.data = req.data
+            self.timestamp = req.timestamp
+        self.result = req.result
+        self.normalize()
+
+    def normalize(self):
+        """
+        Make sure all fields are in their canonical forms, and calculate any
+        derived values.  Should be called whenever updates occur to any of the
+        basic data members.
+        """
+        func = self.function.upper().replace(' ','_')
+        self.reqtype = self.reqtype_map.get(func, self.function)
+        if self.endpoint == -1:
+            self.endpoint = None
+        if self.endpoint is not None:
+            self.endpoint_str = '{0:02x}'.format(self.endpoint)
+        else:
+            self.endpoint_str = ''
+        self.data_count = len(self.data)
+        hdata = []
+        adata = []
+        for byte in self.data:
+            hdata.append('{0:02x}'.format(byte))
+            if byte >= 0x20 and byte <= 0x7f:
+                adata.append(chr(byte))
+            else:
+                adata.append('.')
+        self.hexdata = ' '.join(hdata)
+        self.ascdata = ''.join(adata)
+        if self.reqtype == 'transfer' and self.data:
+            count = self.data[0]
+            if count < 8:
+                self.ascproto = self.ascdata[1:count+1]
+            else:
+                self.ascproto = ''
+        else:
+            self.ascproto = ''
+        errstr = self.result or ''
+        if errstr == 'Success (Success)':
+            errstr = ""
+        if errstr:
+            errstr = "[%s]" % (stat,)
+        self.errstr = errstr
+
+    def adjust_timestamps(self, adj):
+        if self.timestamp is not None:
+            self.timestamp += adj
+        if self.start_timestamp is not None:
+            self.start_timestamp += adj
+        if self.end_timestamp is not None:
+            self.end_timestamp += adj
+
+    def parse_hexdata(self, hexdata):
+        if not hexdata:
+            hexdata = ''
+        hexdata = hexdata.replace(' ', '')
+        data = []
+        for i in xrange(0, len(hexdata), 2):
+            byte = hexdata[i:i+2]
+            data.append(int(byte, 16))
+        return data
+
+    def format_self(self, fmt):
+        return fmt.format(__class__=self.__class__, **self.__dict__)
+
+    def __repr__(self):
+        return self.format_self("<{__class__.__name__}:{seq} {reqtype} {direction} {data_count} bytes>")
+
+###############################################################################
+
+class SnoopyUSBRequest (USBRequest):
+    "USBRequest class for parsing SnoopyPro XML data (in ElementTree form)"
+    def parse_data(self, xml):
+        self.seq = int(xml.get('sequence'))
+        self.timestamp = float(xml.findtext('timestamp')) / 1000
+        self.function = xml.findtext('function')
+        self.endpoint = int(xml.findtext('endpoint'))
+        if self.endpoint & 0x80:
+            self.direction = 'in'
+        else:
+            self.direction = 'out'
+        self.data = self.parse_hexdata(xml.findtext('payload/payloadbytes'))
+        self.start_timestamp = self.timestamp
+
+
+def parse_snoopyxml(infile):
+    xml = read_xml(infile)
+    reqs = {}
+    for urb in xml.iterfind('urb'):
+        r = SnoopyUSBRequest(urb)
+        if r.seq in reqs:
+            reqs[r.seq].update_completion(r)
+        else:
+            reqs[r.seq] = r
+    return reqs
+
+###############################################################################
+
+class USBlyzerUSBRequest (USBRequest):
+    "USBRequest class for parsing a row from a USBlyzer HTML table"
+    row_fields = ('type', 'seq', 'timestr', 'function', 'funcdetail', 'hexdata', 'direction', 'cie', 'devobj', 'devname', 'driver', 'irp', 'result')
+
+    def parse_data(self, row):
+        for attr, val in zip(self.row_fields, row):
+            setattr(self, attr, val.strip())
+        if '-' in self.seq:
+            seq, refseq = self.seq.split('-')
+            self.seq = int(seq)
+            self.refseq = int(refseq)
+        else:
+            self.seq = int(self.seq)
+            self.refseq = None
+        self.timestamp = self.parse_time(self.timestr)
+        if ':' in self.cie:
+            self.endpoint = int(self.cie.split(':')[2], 16)
+        self.data = self.parse_hexdata(self.hexdata)
+
+    def parse_time(self, timestr):
+        hh, mm, ss = timestr.split(':')
+        return int(hh) * 3600 + int(mm) * 60 + float(ss)
+
+
+def parse_usblyzer(infile):
+    parser = TableParser()
+    for line in infile.xreadlines():
+        parser.feed(line)
+    reqs = {}
+    for row in parser.table_data:
+        if row[0] == 'URB':
+            e = USBlyzerUSBRequest(row)
+            if e.driver == 'hhdusbh':
+                reqs[e.seq] = e
+            if e.refseq in reqs:
+                reqs[e.refseq].update_completion(e)
+    return reqs
+
+###############################################################################
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+      description="Process USB logs in various formats to a common text output for analysis",
+      epilog="Note: All input is read from stdin and output is written to stdout."
+    )
+    group = parser.add_argument_group("Input Type (must specify one)")
+    megroup = group.add_mutually_exclusive_group(required=True)
+    megroup.add_argument('--snoopyxml', help="XML log produced by SnoopyPro", action='store_true')
+    megroup.add_argument('--usblyzer', help="HTML output produced by USBlyzer", action='store_true')
+    args = parser.parse_args()
+
+    if args.usblyzer:
+        reqs = parse_usblyzer(sys.stdin)
+    elif args.snoopyxml:
+        reqs = parse_snoopyxml(sys.stdin)
+    else:
+        sys.stderr.write("Internal Error: Unknown input type option specified\n")
+        sys.exit(1)
+
+    base_timestamp = min(r.timestamp for r in reqs.values())
+    s = sorted((r.timestamp, r.seq, r) for r in reqs.values())
+    for rt, rs, r in s:
+        r.adjust_timestamps(-base_timestamp)
+        if r.completed:
+            print r.format_self("{timestamp:7.3f} {reqtype:8} {endpoint_str:2}-{direction:3} {hexdata:23} {ascproto}")
