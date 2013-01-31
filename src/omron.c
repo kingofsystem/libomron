@@ -19,6 +19,10 @@
 #include <stdlib.h>
 #include <math.h>
 
+// Global constants declared in omron.h
+const uint32_t OMRON_VID = 0x0590;
+const uint32_t OMRON_PID = 0x0028;
+
 // NOTE: The following list must be kept consistent with the error constants
 //       defined in omron.h!
 static const char *err_msgs[] = {
@@ -223,7 +227,6 @@ int omron_get_command_return(omron_device* dev, int size, unsigned char* data)
 {
 	int total_read_size = 0;
 	int current_read_size = 0;
-	int has_checked = 0;
 	unsigned char input_report[dev->input_size];
 	int read_result;
 	const int max_data_chunk = sizeof(input_report) - 1;

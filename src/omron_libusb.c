@@ -16,7 +16,9 @@
 #include "omron_internal.h"
 #include <stdlib.h>
 
-#define OMRON_USB_INTERFACE	0
+#define OMRON_INTERFACE 0
+#define OMRON_OUT_ENDPT 0x02
+#define OMRON_IN_ENDPT  0x81
 
 // FIXME: The following should really be parsed from the HID descriptor instead
 //        of being defined as macros..
@@ -128,14 +130,14 @@ int omron_open(omron_device* s, int device_vid, int device_pid, unsigned int dev
 	s->output_size = OUTPUT_REPORT_SIZE;
 	s->device._is_open = 1;
 
-	if(libusb_kernel_driver_active(s->device._device, 0))
+	if(libusb_kernel_driver_active(s->device._device, OMRON_INTERFACE))
 	{
-		status = libusb_detach_kernel_driver(s->device._device, 0);
+		status = libusb_detach_kernel_driver(s->device._device, OMRON_INTERFACE);
 		if (status < 0) {
 			MSG_WARN("libusb_detach_kernel_driver returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
 		}
 	}
-	status = libusb_claim_interface(s->device._device, 0);
+	status = libusb_claim_interface(s->device._device, OMRON_INTERFACE);
 	if (status < 0) {
 		MSG_ERROR("libusb_claim_interface returned %d for device %02x:%02x\n", status, libusb_get_bus_number(dev), libusb_get_device_address(dev));
 	}
@@ -152,7 +154,7 @@ int omron_close(omron_device* s)
 		MSG_ERROR("Device not open\n");
 		return OMRON_ERR_NOTOPEN;
 	}
-	status = libusb_release_interface(s->device._device, 0);
+	status = libusb_release_interface(s->device._device, OMRON_INTERFACE);
 	if (status < 0)
 	{
 		libusb_device *dev = libusb_get_device(s->device._device);
