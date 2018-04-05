@@ -66,20 +66,6 @@ int main(int argc, char** argv)
 		printf("%.2d/%.2d/20%.2d %.2d:%.2d:%.2d SYS: %3d DIA: %3d PULSE: %3d\n", r.day, r.month, r.year, r.hour, r.minute, r.second, r.sys, r.dia, r.pulse);
 	}
 
-	printf("Weekly info:\n");
-	for(i = 0; i < 9; i++) {
-	  	omron_bp_week_info w;
-
-		w = omron_get_weekly_bp_data(test, bank, i, 0);
-		if (w.present && w.dia != 0)
-			printf("Morning[%d %02d/%02d/20%02d] = sys:%d dia:%d pulse:%d.\n", i, w.day, w.month, w.year, w.sys, w.dia, w.pulse);
-
-		w = omron_get_weekly_bp_data(test, bank, i, 1);
-		if (w.present && w.dia != 0)
-			printf("Evening[%d %02d/%02d/20%02d] = sys:%d dia:%d pulse:%d.\n", i, w.day, w.month, w.year, w.sys, w.dia, w.pulse);
-	}
-
-
 
 	ret = omron_close(test);
 	if (ret < 0) {
